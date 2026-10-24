@@ -23,6 +23,16 @@
   main {
     max-width: 34rem;
     text-align: center;
+    position: relative;
+    z-index: 2;
+    animation: fadein 1.4s ease both;
+  }
+  @keyframes fadein {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    main { animation: none; }
   }
   h1 {
     font-size: 1rem;
@@ -84,5 +94,6 @@
   <p class="identity">Named for <i>Idaea pseliota</i>, the doily wave moth.</p>
   <nav><a href="/quotes/">Favorite quotes</a><a href="https://github.com/pseliota/harness-research">Harness research</a></nav>
 </main>
+<script src="/moth.js" defer></script>
 </body>
 </html>

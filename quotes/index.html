@@ -20,6 +20,16 @@
   main {
     max-width: 38rem;
     margin: 0 auto;
+    position: relative;
+    z-index: 2;
+    animation: fadein 1.4s ease both;
+  }
+  @keyframes fadein {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    main { animation: none; }
   }
   nav {
     font-size: 0.95rem;
@@ -70,5 +80,6 @@
   </blockquote>
   <div class="rule" aria-hidden="true"></div>
 </main>
+<script src="/moth.js" defer></script>
 </body>
 </html>

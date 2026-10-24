@@ -83,9 +83,11 @@
       ctx.fillStyle = gradient;
       ctx.fillRect(0, 0, w, h);
       var waves = [
-        { base: 0.28, amp: 9, speed: 0.0004, phase: 0, alpha: 0.30 },
+        { base: 0.12, amp: 8, speed: 0.0004, phase: 0, alpha: 0.28 },
+        { base: 0.32, amp: 11, speed: 0.00035, phase: 1, alpha: 0.24 },
         { base: 0.52, amp: 13, speed: 0.0003, phase: 2, alpha: 0.22 },
-        { base: 0.76, amp: 17, speed: 0.00022, phase: 4, alpha: 0.16 }
+        { base: 0.72, amp: 15, speed: 0.00026, phase: 3, alpha: 0.19 },
+        { base: 0.92, amp: 17, speed: 0.00022, phase: 4, alpha: 0.16 }
       ];
       for (var i = 0; i < waves.length; i++) {
         var wave = waves[i];
@@ -144,7 +146,7 @@
   }
 
   var computeShader = [
-    "struct Params { damping: f32, gridW: f32, gridH: f32, pad: f32 }",
+    "struct Params { damping: f32, gridW: f32, gridH: f32, time: f32 }",
     "struct Disturb { pos: vec2<f32>, amp: f32, radius: f32 }",
     "struct Disturbs { items: array<Disturb, 4> }",
     "@group(0) @binding(0) var<storage, read> cur: array<f32>;",
@@ -181,7 +183,7 @@
   ].join("\n");
 
   var renderShader = [
-    "struct Params { damping: f32, gridW: f32, gridH: f32, pad: f32 }",
+    "struct Params { damping: f32, gridW: f32, gridH: f32, time: f32 }",
     "struct VSOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> }",
     "@vertex",
     "fn vs(@builtin(vertex_index) i: u32) -> VSOut {",
@@ -213,6 +215,7 @@
     "  let shade = vec3<f32>(0.82, 0.77, 0.65);",
     "  var col = mix(shade, cream, diffuse);",
     "  col = col + heights[idx] * 0.015;",
+    "  col = col + vec3<f32>(0.02 * sin(uv.y * 40.0 + params.time * 0.8 + sin(uv.x * 20.0 + params.time * 0.5) * 0.5));",
     "  col = clamp(col, vec3<f32>(0.0), vec3<f32>(1.0));",
     "  return vec4<f32>(col, 1.0);",
     "}"
@@ -282,6 +285,7 @@
     var useA = true;
     var nextRandom = performance.now() + 2500;
     function webgpuFrame(now) {
+      device.queue.writeBuffer(paramsBuffer, 0, new Float32Array([0.97, gridW, gridH, now * 0.001]));
       if (now >= nextRandom) {
         pendingDisturbs.push({ x: Math.random() * window.innerWidth, y: Math.random() * window.innerHeight, amp: 2, radius: 10 });
         nextRandom = now + 2500 + Math.random() * 2500;

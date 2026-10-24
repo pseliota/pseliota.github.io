@@ -36,41 +36,73 @@
   }
 
   var x = -60, y = window.innerHeight * 0.25;
-  var targetX = window.innerWidth * 0.7, targetY = window.innerHeight * 0.2;
-  var pausedUntil = 0, boostUntil = 0;
+  var vx = 20, vy = 0;
+  var movingUntil = performance.now() + 8000;
+  var restingUntil = 0;
+  var resting = false;
+  var boostUntil = 0;
   var last = performance.now();
 
-  function pickTarget() {
-    var margin = 70;
-    targetX = margin + Math.random() * Math.max(100, window.innerWidth - margin * 2);
-    targetY = margin + Math.random() * Math.max(100, window.innerHeight - margin * 2);
+  function randn() {
+    var u = Math.max(1e-9, Math.random());
+    var v = Math.random();
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
   }
 
   moth.addEventListener("click", function () {
-    pickTarget();
+    var angle = Math.random() * 2 * Math.PI;
+    vx = Math.cos(angle) * 190;
+    vy = Math.sin(angle) * 190;
+    resting = false;
     boostUntil = performance.now() + 1600;
-    pausedUntil = 0;
+    movingUntil = performance.now() + 8000;
   });
 
   function frame(now) {
     var dt = Math.min(0.05, (now - last) / 1000);
     last = now;
-    if (now < pausedUntil) {
+    if (resting && now >= restingUntil) {
+      resting = false;
+      movingUntil = now + 5000 + Math.random() * 7000;
+      var kick = Math.random() * 2 * Math.PI;
+      vx = Math.cos(kick) * 15;
+      vy = Math.sin(kick) * 15;
+    }
+    if (!resting && now > movingUntil) {
+      resting = true;
+      restingUntil = now + 3000 + Math.random() * 5000;
+    }
+    if (resting) {
       moth.classList.add("moth-resting");
+      var settle = Math.exp(-3 * dt);
+      vx *= settle;
+      vy *= settle;
     } else {
       moth.classList.remove("moth-resting");
-      var speed = now < boostUntil ? 190 : 24;
-      var dx = targetX - x, dy = targetY - y;
-      var dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist < 4) {
-        pausedUntil = now + 3000 + Math.random() * 5000;
-        pickTarget();
-      } else {
-        x += (dx / dist) * speed * dt;
-        y += (dy / dist) * speed * dt;
-        moth.style.transform = "scaleX(" + (dx < 0 ? -1 : 1) + ")";
+      var sigma = 35;
+      var kickScale = sigma * Math.sqrt(dt);
+      vx += randn() * kickScale;
+      vy += randn() * kickScale;
+      var damp = Math.exp(-0.9 * dt);
+      vx *= damp;
+      vy *= damp;
+      var speed = Math.sqrt(vx * vx + vy * vy);
+      var maxSpeed = now < boostUntil ? 200 : 60;
+      if (speed > maxSpeed) {
+        vx = (vx / speed) * maxSpeed;
+        vy = (vy / speed) * maxSpeed;
+      }
+      if (Math.abs(vx) > 5) {
+        moth.style.transform = "scaleX(" + (vx < 0 ? -1 : 1) + ")";
       }
     }
+    x += vx * dt;
+    y += vy * dt;
+    var margin = 20;
+    if (x < margin) { x = margin; vx = Math.abs(vx); }
+    if (x > window.innerWidth - 70) { x = window.innerWidth - 70; vx = -Math.abs(vx); }
+    if (y < margin) { y = margin; vy = Math.abs(vy); }
+    if (y > window.innerHeight - 60) { y = window.innerHeight - 60; vy = -Math.abs(vy); }
     moth.style.left = x + "px";
     moth.style.top = y + "px";
     requestAnimationFrame(frame);

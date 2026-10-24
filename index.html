@@ -32,7 +32,7 @@
     margin: 0 0 2.5rem;
     color: #6b6257;
   }
-  p {
+  .statement {
     font-size: clamp(1.6rem, 5vw, 2.4rem);
     line-height: 1.35;
     margin: 0;
@@ -41,12 +41,24 @@
     width: 2.5rem;
     height: 1px;
     background: #b8ad9c;
-    margin: 2.5rem auto 0;
+    margin: 2.5rem auto;
   }
-  .note {
-    margin-top: 1.5rem;
+  .now {
+    font-size: 1.05rem;
+    line-height: 1.6;
+    margin: 0;
+    color: #3a342c;
+  }
+  .now a {
+    color: #2b2620;
+    text-decoration: none;
+    border-bottom: 1px solid #b8ad9c;
+  }
+  .identity {
+    margin-top: 2.5rem;
     font-size: 0.95rem;
     font-style: italic;
+    line-height: 1.6;
     color: #6b6257;
   }
   nav {
@@ -58,15 +70,19 @@
     text-decoration: none;
     border-bottom: 1px solid #b8ad9c;
   }
+  nav a + a {
+    margin-left: 1.5rem;
+  }
 </style>
 </head>
 <body>
 <main>
   <h1>Idaea</h1>
-  <p>Consideration is the quietest form of care.</p>
+  <p class="statement">Consideration is the quietest form of care.</p>
   <div class="rule" aria-hidden="true"></div>
-  <p class="note">A lab for open-ended projects.</p>
-  <nav><a href="/quotes/">Favorite quotes</a></nav>
+  <p class="now">A lab for open-ended projects. At the moment, that mostly means one question: what is the invisible machinery between a model and the world — the part that decides what it sees next, what its output does, and when to stop? I am working toward the smallest theory that covers all such systems, precisely enough to code.</p>
+  <p class="identity">Named for <i>Idaea pseliota</i>, the doily wave moth.</p>
+  <nav><a href="/quotes/">Favorite quotes</a><a href="https://github.com/pseliota/harness-research">Harness research</a></nav>
 </main>
 </body>
 </html>

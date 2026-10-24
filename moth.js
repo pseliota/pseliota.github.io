@@ -4,11 +4,11 @@
 
   var background = document.createElement("div");
   background.setAttribute("aria-hidden", "true");
-  background.style.cssText = "position:fixed;inset:0;z-index:1;overflow:hidden;pointer-events:none;";
+  background.style.cssText = "position:fixed;inset:0;width:100vw;height:100vh;height:100dvh;z-index:1;overflow:hidden;pointer-events:none;transform:translateZ(0);will-change:transform;";
   document.body.appendChild(background);
 
   var sky = document.createElement("div");
-  sky.style.cssText = "position:absolute;inset:0;overflow:hidden;";
+  sky.style.cssText = "position:absolute;inset:0;overflow:hidden;pointer-events:none;";
   background.appendChild(sky);
 
   if (!reduced) {
@@ -24,7 +24,7 @@
   }
 
   var smokeLayer = document.createElement("div");
-  smokeLayer.style.cssText = "position:absolute;inset:0;overflow:hidden;z-index:9;";
+  smokeLayer.style.cssText = "position:absolute;inset:0;overflow:hidden;z-index:9;pointer-events:none;";
   background.appendChild(smokeLayer);
 
   var moth = document.createElement("div");
@@ -37,9 +37,24 @@
   wingStyle.textContent = ".wing-left{transform-box:fill-box;transform-origin:right center;animation:flap 0.7s ease-in-out infinite alternate}.wing-right{transform-box:fill-box;transform-origin:left center;animation:flap 0.7s ease-in-out infinite alternate}@keyframes flap{from{transform:scaleX(0.7)}to{transform:scaleX(1)}}.moth-resting .wing-left,.moth-resting .wing-right{animation-duration:2s}@keyframes puff{from{opacity:0.4;transform:scale(0.6)}to{opacity:0;transform:scale(1.7) translateY(-8px)}}";
   document.head.appendChild(wingStyle);
 
-  window.addEventListener("click", function (event) {
-    pendingDisturbs.push({ x: event.clientX, y: event.clientY, amp: 6, radius: 12 });
-  });
+  var lastPointerRipple = 0;
+  function rippleFromPointer(event, isMove) {
+    var now = performance.now();
+    if (isMove) {
+      var isTouch = (event.touches && event.touches.length > 0) || event.pointerType === "touch";
+      if (!isTouch && event.buttons === 0) { return; }
+      if (now - lastPointerRipple < 60) { return; }
+    }
+    lastPointerRipple = now;
+    var touch = event.touches && event.touches[0];
+    var px = touch ? touch.clientX : event.clientX;
+    var py = touch ? touch.clientY : event.clientY;
+    pendingDisturbs.push({ x: px, y: py, amp: 6, radius: 12 });
+  }
+  window.addEventListener("pointerdown", function (event) { rippleFromPointer(event, false); });
+  window.addEventListener("pointermove", function (event) { rippleFromPointer(event, true); });
+  window.addEventListener("touchstart", function (event) { rippleFromPointer(event, false); }, { passive: true });
+  window.addEventListener("touchmove", function (event) { rippleFromPointer(event, true); }, { passive: true });
 
   function startCanvasWater() {
     var canvas = document.createElement("canvas");
@@ -54,6 +69,8 @@
     }
     resize();
     window.addEventListener("resize", resize);
+    window.addEventListener("scroll", resize, { passive: true });
+    if (window.visualViewport) { window.visualViewport.addEventListener("resize", resize); }
     var ripples = [];
     var lastWater = performance.now();
     var nextRandom = lastWater + 2500;
@@ -218,6 +235,8 @@
     }
     resizeCanvas();
     window.addEventListener("resize", resizeCanvas);
+    window.addEventListener("scroll", resizeCanvas, { passive: true });
+    if (window.visualViewport) { window.visualViewport.addEventListener("resize", resizeCanvas); }
     var gridW = 256;
     var gridH = Math.max(128, Math.min(384, Math.round(256 * window.innerHeight / window.innerWidth)));
     var cellCount = gridW * gridH;
@@ -336,7 +355,7 @@
     return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
   }
 
-  moth.addEventListener("click", function () {
+  moth.addEventListener("pointerdown", function () {
     var angle = Math.random() * 2 * Math.PI;
     vx = Math.cos(angle) * 190;
     vy = Math.sin(angle) * 190;

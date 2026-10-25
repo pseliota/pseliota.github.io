@@ -1,5 +1,6 @@
 (function () {
   var reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var webgpuActive = false;
   var pendingDisturbs = [];
 
   var background = document.createElement("div");
@@ -23,22 +24,23 @@
     document.head.appendChild(twinkleStyle);
   }
 
-  var smokeLayer = document.createElement("div");
-  smokeLayer.style.cssText = "position:absolute;inset:0;overflow:hidden;z-index:9;pointer-events:none;";
-  background.appendChild(smokeLayer);
+  var mothCenter = reduced ? { x: window.innerWidth * 0.75, y: window.innerHeight * 0.25 } : { x: -80, y: window.innerHeight * 0.3 };
+  var mothVel = { x: 20, y: 0 };
+  var mothFlip = 1;
+  var mothMovingUntil = performance.now() + 8000;
+  var mothRestingUntil = 0;
+  var mothResting = false;
+  var mothBoostUntil = 0;
 
-  var moth = document.createElement("div");
-  moth.title = "A doily wave moth, passing through.";
-  moth.style.cssText = "position:absolute;width:46px;height:32px;z-index:10;cursor:pointer;pointer-events:auto;opacity:0.8;filter:blur(0.6px);";
-  moth.innerHTML = '<svg viewBox="0 0 64 40" width="46" height="32"><g class="wing-left"><path d="M32 20 C22 4 6 2 7 15 C8 27 20 28 32 22 Z" fill="#e9dfc9" fill-opacity="0.55" stroke="#6b6257" stroke-opacity="0.7" stroke-width="1"/></g><g class="wing-right"><path d="M32 20 C42 4 58 2 57 15 C56 27 44 28 32 22 Z" fill="#e9dfc9" fill-opacity="0.55" stroke="#6b6257" stroke-opacity="0.7" stroke-width="1"/></g><ellipse cx="32" cy="20" rx="2.5" ry="10" fill="#6b6257" fill-opacity="0.6"/><path d="M30 11 C27 6 25 5 23 4 M34 11 C37 6 39 5 41 4" fill="none" stroke="#6b6257" stroke-opacity="0.6" stroke-width="1"/></svg>';
-  background.appendChild(moth);
-
-  var wingStyle = document.createElement("style");
-  wingStyle.textContent = ".wing-left{transform-box:fill-box;transform-origin:right center;animation:flap 0.7s ease-in-out infinite alternate}.wing-right{transform-box:fill-box;transform-origin:left center;animation:flap 0.7s ease-in-out infinite alternate}@keyframes flap{from{transform:scaleX(0.7)}to{transform:scaleX(1)}}.moth-resting .wing-left,.moth-resting .wing-right{animation-duration:2s}@keyframes puff{from{opacity:0.4;transform:scale(0.6)}to{opacity:0;transform:scale(1.7) translateY(-8px)}}";
-  document.head.appendChild(wingStyle);
+  function randnJS() {
+    var u = Math.max(1e-9, Math.random());
+    var v = Math.random();
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+  }
 
   var lastPointerRipple = 0;
   function rippleFromPointer(event, isMove) {
+    if (!webgpuActive) { return; }
     var now = performance.now();
     if (isMove) {
       var isTouch = (event.touches && event.touches.length > 0) || event.pointerType === "touch";
@@ -49,6 +51,17 @@
     var touch = event.touches && event.touches[0];
     var px = touch ? touch.clientX : event.clientX;
     var py = touch ? touch.clientY : event.clientY;
+    var dx = px - mothCenter.x;
+    var dy = py - mothCenter.y;
+    if (!isMove && dx * dx + dy * dy < 100 * 100) {
+      var angle = Math.random() * 2 * Math.PI;
+      mothVel.x = Math.cos(angle) * 190;
+      mothVel.y = Math.sin(angle) * 190;
+      mothResting = false;
+      mothBoostUntil = performance.now() + 1600;
+      mothMovingUntil = performance.now() + 8000;
+      return;
+    }
     pendingDisturbs.push({ x: px, y: py, amp: 6, radius: 12 });
   }
   window.addEventListener("pointerdown", function (event) { rippleFromPointer(event, false); });
@@ -56,8 +69,38 @@
   window.addEventListener("touchstart", function (event) { rippleFromPointer(event, false); }, { passive: true });
   window.addEventListener("touchmove", function (event) { rippleFromPointer(event, true); }, { passive: true });
 
+  function bezier(p0, c, p1, t) {
+    var u = 1 - t;
+    return { x: u * u * p0.x + 2 * u * t * c.x + t * t * p1.x, y: u * u * p0.y + 2 * u * t * c.y + t * t * p1.y };
+  }
+  function sampleCurve(arr, p0, c, p1, n) {
+    for (var i = 0; i < n; i++) {
+      arr.push(bezier(p0, c, p1, i / (n - 1)));
+    }
+  }
+  function sampleLine(arr, p0, p1, n) {
+    for (var i = 0; i < n; i++) {
+      var t = i / (n - 1);
+      arr.push({ x: p0.x + (p1.x - p0.x) * t, y: p0.y + (p1.y - p0.y) * t });
+    }
+  }
+  function buildAnchors() {
+    var a = [];
+    sampleCurve(a, { x: 0, y: -14 }, { x: -30, y: -30 }, { x: -70, y: -2 }, 60);
+    sampleCurve(a, { x: -70, y: -2 }, { x: -45, y: 30 }, { x: 0, y: 14 }, 60);
+    sampleCurve(a, { x: 0, y: -14 }, { x: 30, y: -30 }, { x: 70, y: -2 }, 60);
+    sampleCurve(a, { x: 70, y: -2 }, { x: 45, y: 30 }, { x: 0, y: 14 }, 60);
+    sampleCurve(a, { x: 0, y: 0 }, { x: -20, y: -6 }, { x: -42, y: 6 }, 30);
+    sampleCurve(a, { x: 0, y: 0 }, { x: 20, y: -6 }, { x: 42, y: 6 }, 30);
+    sampleLine(a, { x: 0, y: -18 }, { x: 0, y: 18 }, 40);
+    sampleLine(a, { x: 0, y: -18 }, { x: -20, y: -36 }, 15);
+    sampleLine(a, { x: 0, y: -18 }, { x: 20, y: -36 }, 15);
+    return a;
+  }
+
   function startPlainBackground() {
     document.body.style.background = "#faf6ee";
+    window.__waterMode = "plain";
     function clearDisturbs() {
       pendingDisturbs.length = 0;
       requestAnimationFrame(clearDisturbs);
@@ -67,7 +110,7 @@
     }
   }
 
-  var computeShader = [
+  var waterComputeShader = [
     "struct Params { damping: f32, gridW: f32, gridH: f32, time: f32 }",
     "struct Disturb { pos: vec2<f32>, amp: f32, radius: f32 }",
     "struct Disturbs { items: array<Disturb, 4> }",
@@ -104,7 +147,7 @@
     "}"
   ].join("\n");
 
-  var renderShader = [
+  var waterRenderShader = [
     "struct Params { damping: f32, gridW: f32, gridH: f32, time: f32 }",
     "struct VSOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> }",
     "@vertex",
@@ -143,70 +186,259 @@
     "}"
   ].join("\n");
 
+  var smokeComputeShader = [
+    "struct SmokeParams { center: vec2<f32>, flip: f32, dt: f32, sigma: f32, k: f32, seed: f32, anchorCount: f32, viewport: vec2<f32>, pad: vec2<f32> }",
+    "struct Particle { pos: vec2<f32>, size: f32, seed: f32 }",
+    "@group(0) @binding(0) var<storage, read_write> particles: array<Particle>;",
+    "@group(0) @binding(1) var<storage, read> anchors: array<vec2<f32>>;",
+    "@group(0) @binding(2) var<uniform> params: SmokeParams;",
+    "fn hash(n: f32) -> f32 { return fract(sin(n) * 43758.5453); }",
+    "fn randn2(seed: f32, i: u32) -> vec2<f32> {",
+    "  let u1 = max(hash(seed + f32(i) * 12.9898), 0.0001);",
+    "  let u2 = hash(seed * 1.7 + f32(i) * 78.233);",
+    "  let r = sqrt(-2.0 * log(u1));",
+    "  let theta = 6.2831853 * u2;",
+    "  return vec2<f32>(r * cos(theta), r * sin(theta));",
+    "}",
+    "@compute @workgroup_size(64)",
+    "fn main(@builtin(global_invocation_id) id: vec3<u32>) {",
+    "  let i = id.x;",
+    "  if (i >= arrayLength(&particles)) { return; }",
+    "  let anchorCount = u32(params.anchorCount);",
+    "  let anchorIdx = i * anchorCount / arrayLength(&particles);",
+    "  let anchor = anchors[anchorIdx];",
+    "  let anchorWorld = params.center + vec2<f32>(anchor.x * params.flip, anchor.y);",
+    "  var p = particles[i];",
+    "  let drift = -params.k * (p.pos - anchorWorld);",
+    "  p.pos = p.pos + drift * params.dt + params.sigma * sqrt(params.dt) * randn2(params.seed, i);",
+    "  particles[i] = p;",
+    "}"
+  ].join("\n");
+
+  var smokeRenderShader = [
+    "struct SmokeParams { center: vec2<f32>, flip: f32, dt: f32, sigma: f32, k: f32, seed: f32, anchorCount: f32, viewport: vec2<f32>, pad: vec2<f32> }",
+    "struct Particle { pos: vec2<f32>, size: f32, seed: f32 }",
+    "struct VSOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32>, @location(1) alpha: f32 }",
+    "@group(0) @binding(0) var<storage, read> particles: array<Particle>;",
+    "@group(0) @binding(1) var<uniform> params: SmokeParams;",
+    "@vertex",
+    "fn vs(@builtin(vertex_index) v: u32, @builtin(instance_index) inst: u32) -> VSOut {",
+    "  var corners = array<vec2<f32>, 6>(vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, -1.0), vec2<f32>(-1.0, 1.0), vec2<f32>(1.0, -1.0), vec2<f32>(1.0, 1.0), vec2<f32>(-1.0, 1.0));",
+    "  let p = particles[inst];",
+    "  let corner = corners[v];",
+    "  let world = p.pos + corner * p.size * 0.5;",
+    "  var out: VSOut;",
+    "  out.pos = vec4<f32>(world.x / params.viewport.x * 2.0 - 1.0, 1.0 - world.y / params.viewport.y * 2.0, 0.0, 1.0);",
+    "  out.uv = corner * 0.5 + vec2<f32>(0.5, 0.5);",
+    "  out.alpha = 0.12 + fract(p.seed * 0.37) * 0.16;",
+    "  return out;",
+    "}",
+    "@fragment",
+    "fn fs(@location(0) uv: vec2<f32>, @location(1) alpha: f32) -> @location(0) vec4<f32> {",
+    "  let dist = length(uv - vec2<f32>(0.5, 0.5)) * 2.0;",
+    "  let a = smoothstep(1.0, 0.1, dist) * alpha;",
+    "  return vec4<f32>(0.78, 0.72, 0.58, a);",
+    "}"
+  ].join("\n");
+
   async function startWebGPU() {
     if (!navigator.gpu) { return false; }
     var adapter = await navigator.gpu.requestAdapter();
     if (!adapter) { return false; }
     var device = await adapter.requestDevice();
-    var canvas = document.createElement("canvas");
-    canvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%;";
-    background.insertBefore(canvas, sky);
-    var context = canvas.getContext("webgpu");
+
+    var waterCanvas = document.createElement("canvas");
+    waterCanvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%;";
+    background.insertBefore(waterCanvas, sky);
+    var waterContext = waterCanvas.getContext("webgpu");
     var format = navigator.gpu.getPreferredCanvasFormat();
-    context.configure({ device: device, format: format, alphaMode: "opaque" });
-    function resizeCanvas() {
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
+    waterContext.configure({ device: device, format: format, alphaMode: "opaque" });
+    function resizeWaterCanvas() {
+      waterCanvas.width = window.innerWidth;
+      waterCanvas.height = window.innerHeight;
     }
-    resizeCanvas();
-    window.addEventListener("resize", resizeCanvas);
-    window.addEventListener("scroll", resizeCanvas, { passive: true });
-    if (window.visualViewport) { window.visualViewport.addEventListener("resize", resizeCanvas); }
+    resizeWaterCanvas();
+    window.addEventListener("resize", resizeWaterCanvas);
+    window.addEventListener("scroll", resizeWaterCanvas, { passive: true });
+    if (window.visualViewport) { window.visualViewport.addEventListener("resize", resizeWaterCanvas); }
+
+    var smokeCanvas = document.createElement("canvas");
+    smokeCanvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%;z-index:10;pointer-events:none;";
+    background.appendChild(smokeCanvas);
+    var smokeContext = smokeCanvas.getContext("webgpu");
+    smokeContext.configure({ device: device, format: format, alphaMode: "premultiplied" });
+    function resizeSmokeCanvas() {
+      smokeCanvas.width = window.innerWidth;
+      smokeCanvas.height = window.innerHeight;
+    }
+    resizeSmokeCanvas();
+    window.addEventListener("resize", resizeSmokeCanvas);
+    window.addEventListener("scroll", resizeSmokeCanvas, { passive: true });
+    if (window.visualViewport) { window.visualViewport.addEventListener("resize", resizeSmokeCanvas); }
+
     var gridW = 256;
     var gridH = Math.max(128, Math.min(384, Math.round(256 * window.innerHeight / window.innerWidth)));
     var cellCount = gridW * gridH;
     var bufferA = device.createBuffer({ size: cellCount * 4, usage: GPUBufferUsage.STORAGE });
     var bufferB = device.createBuffer({ size: cellCount * 4, usage: GPUBufferUsage.STORAGE });
-    var paramsBuffer = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-    device.queue.writeBuffer(paramsBuffer, 0, new Float32Array([0.97, gridW, gridH, 0]));
+    var waterParamsBuffer = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    device.queue.writeBuffer(waterParamsBuffer, 0, new Float32Array([0.97, gridW, gridH, 0]));
     var disturbsBuffer = device.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-    var computeModule = device.createShaderModule({ code: computeShader });
-    var renderModule = device.createShaderModule({ code: renderShader });
-    var computeInfo = await computeModule.getCompilationInfo();
-    var renderInfo = await renderModule.getCompilationInfo();
-    if (computeInfo.messages.some(function (m) { return m.type === "error"; }) || renderInfo.messages.some(function (m) { return m.type === "error"; })) {
-      throw new Error("shader compilation failed");
+
+    var anchors = buildAnchors();
+    var anchorCount = anchors.length;
+    var anchorData = new Float32Array(anchorCount * 2);
+    for (var ai = 0; ai < anchorCount; ai++) {
+      anchorData[ai * 2] = anchors[ai].x;
+      anchorData[ai * 2 + 1] = anchors[ai].y;
     }
-    var computePipeline = device.createComputePipeline({ layout: "auto", compute: { module: computeModule, entryPoint: "main" } });
-    var renderPipeline = device.createRenderPipeline({
+    var anchorBuffer = device.createBuffer({ size: anchorData.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+    device.queue.writeBuffer(anchorBuffer, 0, anchorData);
+
+    var particleCount = 2200;
+    var particleData = new Float32Array(particleCount * 4);
+    for (var pi = 0; pi < particleCount; pi++) {
+      var anchor = anchors[Math.floor(pi * anchorCount / particleCount)];
+      particleData[pi * 4] = mothCenter.x + anchor.x + randnJS() * 6;
+      particleData[pi * 4 + 1] = mothCenter.y + anchor.y + randnJS() * 6;
+      particleData[pi * 4 + 2] = 8 + Math.random() * 8;
+      particleData[pi * 4 + 3] = Math.random() * 1000;
+    }
+    var particleBuffer = device.createBuffer({ size: particleData.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+    device.queue.writeBuffer(particleBuffer, 0, particleData);
+    var smokeParamsBuffer = device.createBuffer({ size: 48, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+
+    var waterComputeModule = device.createShaderModule({ code: waterComputeShader });
+    var waterRenderModule = device.createShaderModule({ code: waterRenderShader });
+    var smokeComputeModule = device.createShaderModule({ code: smokeComputeShader });
+    var smokeRenderModule = device.createShaderModule({ code: smokeRenderShader });
+    var infos = await Promise.all([
+      waterComputeModule.getCompilationInfo(),
+      waterRenderModule.getCompilationInfo(),
+      smokeComputeModule.getCompilationInfo(),
+      smokeRenderModule.getCompilationInfo()
+    ]);
+    for (var ii = 0; ii < infos.length; ii++) {
+      if (infos[ii].messages.some(function (m) { return m.type === "error"; })) { throw new Error("shader compilation failed"); }
+    }
+
+    var waterComputePipeline = device.createComputePipeline({ layout: "auto", compute: { module: waterComputeModule, entryPoint: "main" } });
+    var waterRenderPipeline = device.createRenderPipeline({
       layout: "auto",
-      vertex: { module: renderModule, entryPoint: "vs" },
-      fragment: { module: renderModule, entryPoint: "fs", targets: [{ format: format }] },
+      vertex: { module: waterRenderModule, entryPoint: "vs" },
+      fragment: { module: waterRenderModule, entryPoint: "fs", targets: [{ format: format }] },
       primitive: { topology: "triangle-list" }
     });
-    var computeGroupA = device.createBindGroup({ layout: computePipeline.getBindGroupLayout(0), entries: [
+    var smokeComputePipeline = device.createComputePipeline({ layout: "auto", compute: { module: smokeComputeModule, entryPoint: "main" } });
+    var smokeRenderPipeline = device.createRenderPipeline({
+      layout: "auto",
+      vertex: { module: smokeRenderModule, entryPoint: "vs" },
+      fragment: { module: smokeRenderModule, entryPoint: "fs", targets: [{ format: format, blend: { color: { srcFactor: "src-alpha", dstFactor: "one-minus-src-alpha", operation: "add" }, alpha: { srcFactor: "one", dstFactor: "one-minus-src-alpha", operation: "add" } } }] },
+      primitive: { topology: "triangle-list" }
+    });
+
+    var waterComputeGroupA = device.createBindGroup({ layout: waterComputePipeline.getBindGroupLayout(0), entries: [
       { binding: 0, resource: { buffer: bufferA } },
       { binding: 1, resource: { buffer: bufferB } },
-      { binding: 2, resource: { buffer: paramsBuffer } },
+      { binding: 2, resource: { buffer: waterParamsBuffer } },
       { binding: 3, resource: { buffer: disturbsBuffer } }
     ]});
-    var computeGroupB = device.createBindGroup({ layout: computePipeline.getBindGroupLayout(0), entries: [
+    var waterComputeGroupB = device.createBindGroup({ layout: waterComputePipeline.getBindGroupLayout(0), entries: [
       { binding: 0, resource: { buffer: bufferB } },
       { binding: 1, resource: { buffer: bufferA } },
-      { binding: 2, resource: { buffer: paramsBuffer } },
+      { binding: 2, resource: { buffer: waterParamsBuffer } },
       { binding: 3, resource: { buffer: disturbsBuffer } }
     ]});
-    var renderGroupA = device.createBindGroup({ layout: renderPipeline.getBindGroupLayout(0), entries: [
+    var waterRenderGroupA = device.createBindGroup({ layout: waterRenderPipeline.getBindGroupLayout(0), entries: [
       { binding: 0, resource: { buffer: bufferA } },
-      { binding: 1, resource: { buffer: paramsBuffer } }
+      { binding: 1, resource: { buffer: waterParamsBuffer } }
     ]});
-    var renderGroupB = device.createBindGroup({ layout: renderPipeline.getBindGroupLayout(0), entries: [
+    var waterRenderGroupB = device.createBindGroup({ layout: waterRenderPipeline.getBindGroupLayout(0), entries: [
       { binding: 0, resource: { buffer: bufferB } },
-      { binding: 1, resource: { buffer: paramsBuffer } }
+      { binding: 1, resource: { buffer: waterParamsBuffer } }
     ]});
+    var smokeComputeGroup = device.createBindGroup({ layout: smokeComputePipeline.getBindGroupLayout(0), entries: [
+      { binding: 0, resource: { buffer: particleBuffer } },
+      { binding: 1, resource: { buffer: anchorBuffer } },
+      { binding: 2, resource: { buffer: smokeParamsBuffer } }
+    ]});
+    var smokeRenderGroup = device.createBindGroup({ layout: smokeRenderPipeline.getBindGroupLayout(0), entries: [
+      { binding: 0, resource: { buffer: particleBuffer } },
+      { binding: 1, resource: { buffer: smokeParamsBuffer } }
+    ]});
+
+    webgpuActive = true;
+    window.__waterMode = "webgpu";
+
+    if (reduced) {
+      var encoder0 = device.createCommandEncoder();
+      var waterPass0 = encoder0.beginRenderPass({ colorAttachments: [{ view: waterContext.getCurrentTexture().createView(), loadOp: "clear", clearValue: { r: 0.98, g: 0.96, b: 0.93, a: 1 }, storeOp: "store" }] });
+      waterPass0.setPipeline(waterRenderPipeline);
+      waterPass0.setBindGroup(0, waterRenderGroupA);
+      waterPass0.draw(3);
+      waterPass0.end();
+      var smokeParams0 = new Float32Array(12);
+      smokeParams0[0] = mothCenter.x; smokeParams0[1] = mothCenter.y; smokeParams0[2] = 1; smokeParams0[3] = 0;
+      smokeParams0[4] = 18; smokeParams0[5] = 0.8; smokeParams0[6] = 0; smokeParams0[7] = anchorCount;
+      smokeParams0[8] = window.innerWidth; smokeParams0[9] = window.innerHeight;
+      device.queue.writeBuffer(smokeParamsBuffer, 0, smokeParams0);
+      var smokePass0 = encoder0.beginRenderPass({ colorAttachments: [{ view: smokeContext.getCurrentTexture().createView(), loadOp: "clear", clearValue: { r: 0, g: 0, b: 0, a: 0 }, storeOp: "store" }] });
+      smokePass0.setPipeline(smokeRenderPipeline);
+      smokePass0.setBindGroup(0, smokeRenderGroup);
+      smokePass0.draw(6, particleCount);
+      smokePass0.end();
+      device.queue.submit([encoder0.finish()]);
+      return true;
+    }
+
     var useA = true;
-    function webgpuFrame(now) {
-      void now;
+    var last = performance.now();
+    var seed = 0;
+    function frame(now) {
+      var dt = Math.min(0.05, (now - last) / 1000);
+      last = now;
+      seed += dt * 10;
+      if (mothResting && now >= mothRestingUntil) {
+        mothResting = false;
+        mothMovingUntil = now + 5000 + Math.random() * 7000;
+        var kick = Math.random() * 2 * Math.PI;
+        mothVel.x = Math.cos(kick) * 15;
+        mothVel.y = Math.sin(kick) * 15;
+      }
+      if (!mothResting && now > mothMovingUntil) {
+        mothResting = true;
+        mothRestingUntil = now + 3000 + Math.random() * 5000;
+      }
+      if (mothResting) {
+        var settle = Math.exp(-3 * dt);
+        mothVel.x *= settle;
+        mothVel.y *= settle;
+      } else {
+        var sigma = 35;
+        var kickScale = sigma * Math.sqrt(dt);
+        mothVel.x += randnJS() * kickScale;
+        mothVel.y += randnJS() * kickScale;
+        var damp = Math.exp(-0.9 * dt);
+        mothVel.x *= damp;
+        mothVel.y *= damp;
+        var speed = Math.sqrt(mothVel.x * mothVel.x + mothVel.y * mothVel.y);
+        var maxSpeed = now < mothBoostUntil ? 200 : 60;
+        if (speed > maxSpeed) {
+          mothVel.x = (mothVel.x / speed) * maxSpeed;
+          mothVel.y = (mothVel.y / speed) * maxSpeed;
+        }
+        if (Math.abs(mothVel.x) > 5) {
+          mothFlip = mothVel.x < 0 ? -1 : 1;
+        }
+      }
+      mothCenter.x += mothVel.x * dt;
+      mothCenter.y += mothVel.y * dt;
+      var margin = 20;
+      if (mothCenter.x < margin) { mothCenter.x = margin; mothVel.x = Math.abs(mothVel.x); }
+      if (mothCenter.x > window.innerWidth - 70) { mothCenter.x = window.innerWidth - 70; mothVel.x = -Math.abs(mothVel.x); }
+      if (mothCenter.y < margin) { mothCenter.y = margin; mothVel.y = Math.abs(mothVel.y); }
+      if (mothCenter.y > window.innerHeight - 60) { mothCenter.y = window.innerHeight - 60; mothVel.y = -Math.abs(mothVel.y); }
+
       var disturbs = new Float32Array(16);
       for (var i = 0; i < 4 && pendingDisturbs.length > 0; i++) {
         var d = pendingDisturbs.shift();
@@ -217,34 +449,39 @@
       }
       pendingDisturbs.length = 0;
       device.queue.writeBuffer(disturbsBuffer, 0, disturbs);
+
+      var smokeParams = new Float32Array(12);
+      smokeParams[0] = mothCenter.x; smokeParams[1] = mothCenter.y; smokeParams[2] = mothFlip; smokeParams[3] = dt;
+      smokeParams[4] = 18; smokeParams[5] = 0.8; smokeParams[6] = seed; smokeParams[7] = anchorCount;
+      smokeParams[8] = window.innerWidth; smokeParams[9] = window.innerHeight;
+      device.queue.writeBuffer(smokeParamsBuffer, 0, smokeParams);
+
       var encoder = device.createCommandEncoder();
-      var computePass = encoder.beginComputePass();
-      computePass.setPipeline(computePipeline);
-      computePass.setBindGroup(0, useA ? computeGroupA : computeGroupB);
-      computePass.dispatchWorkgroups(Math.ceil(gridW / 16), Math.ceil(gridH / 16));
-      computePass.end();
+      var waterComputePass = encoder.beginComputePass();
+      waterComputePass.setPipeline(waterComputePipeline);
+      waterComputePass.setBindGroup(0, useA ? waterComputeGroupA : waterComputeGroupB);
+      waterComputePass.dispatchWorkgroups(Math.ceil(gridW / 16), Math.ceil(gridH / 16));
+      waterComputePass.end();
       useA = !useA;
-      var textureView = context.getCurrentTexture().createView();
-      var renderPass = encoder.beginRenderPass({ colorAttachments: [{ view: textureView, loadOp: "clear", clearValue: { r: 0.98, g: 0.96, b: 0.93, a: 1 }, storeOp: "store" }] });
-      renderPass.setPipeline(renderPipeline);
-      renderPass.setBindGroup(0, useA ? renderGroupA : renderGroupB);
-      renderPass.draw(3);
-      renderPass.end();
+      var waterPass = encoder.beginRenderPass({ colorAttachments: [{ view: waterContext.getCurrentTexture().createView(), loadOp: "clear", clearValue: { r: 0.98, g: 0.96, b: 0.93, a: 1 }, storeOp: "store" }] });
+      waterPass.setPipeline(waterRenderPipeline);
+      waterPass.setBindGroup(0, useA ? waterRenderGroupA : waterRenderGroupB);
+      waterPass.draw(3);
+      waterPass.end();
+      var smokeComputePass = encoder.beginComputePass();
+      smokeComputePass.setPipeline(smokeComputePipeline);
+      smokeComputePass.setBindGroup(0, smokeComputeGroup);
+      smokeComputePass.dispatchWorkgroups(Math.ceil(particleCount / 64));
+      smokeComputePass.end();
+      var smokePass = encoder.beginRenderPass({ colorAttachments: [{ view: smokeContext.getCurrentTexture().createView(), loadOp: "clear", clearValue: { r: 0, g: 0, b: 0, a: 0 }, storeOp: "store" }] });
+      smokePass.setPipeline(smokeRenderPipeline);
+      smokePass.setBindGroup(0, smokeRenderGroup);
+      smokePass.draw(6, particleCount);
+      smokePass.end();
       device.queue.submit([encoder.finish()]);
-      requestAnimationFrame(webgpuFrame);
+      requestAnimationFrame(frame);
     }
-    if (reduced) {
-      var encoder0 = device.createCommandEncoder();
-      var renderPass0 = encoder0.beginRenderPass({ colorAttachments: [{ view: context.getCurrentTexture().createView(), loadOp: "clear", clearValue: { r: 0.98, g: 0.96, b: 0.93, a: 1 }, storeOp: "store" }] });
-      renderPass0.setPipeline(renderPipeline);
-      renderPass0.setBindGroup(0, renderGroupA);
-      renderPass0.draw(3);
-      renderPass0.end();
-      device.queue.submit([encoder0.finish()]);
-    } else {
-      requestAnimationFrame(webgpuFrame);
-    }
-    window.__waterMode = "webgpu";
+    requestAnimationFrame(frame);
     return true;
   }
 
@@ -253,100 +490,4 @@
   }).catch(function () {
     startPlainBackground();
   });
-
-  if (reduced) {
-    moth.style.left = "calc(100% - 70px)";
-    moth.style.top = "24px";
-    moth.classList.add("moth-resting");
-    return;
-  }
-
-  var x = -60, y = window.innerHeight * 0.25;
-  var vx = 20, vy = 0;
-  var movingUntil = performance.now() + 8000;
-  var restingUntil = 0;
-  var resting = false;
-  var boostUntil = 0;
-  var last = performance.now();
-  var nextPuff = 0;
-
-  function randn() {
-    var u = Math.max(1e-9, Math.random());
-    var v = Math.random();
-    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
-  }
-
-  moth.addEventListener("pointerdown", function () {
-    var angle = Math.random() * 2 * Math.PI;
-    vx = Math.cos(angle) * 190;
-    vy = Math.sin(angle) * 190;
-    resting = false;
-    boostUntil = performance.now() + 1600;
-    movingUntil = performance.now() + 8000;
-  });
-
-  function spawnPuff(cx, cy) {
-    var puff = document.createElement("span");
-    var size = 20 + Math.random() * 14;
-    puff.style.cssText = "position:absolute;border-radius:50%;background:radial-gradient(circle, rgba(232, 221, 200, 0.55), rgba(232, 221, 200, 0) 70%);filter:blur(4px);width:" + size + "px;height:" + size + "px;left:" + (cx - size / 2) + "px;top:" + (cy - size / 2) + "px;animation:puff 1.8s ease-out forwards;pointer-events:none;";
-    smokeLayer.appendChild(puff);
-    setTimeout(function () { if (puff.parentNode) { puff.parentNode.removeChild(puff); } }, 1900);
-  }
-
-  function frame(now) {
-    var dt = Math.min(0.05, (now - last) / 1000);
-    last = now;
-    if (resting && now >= restingUntil) {
-      resting = false;
-      movingUntil = now + 5000 + Math.random() * 7000;
-      var kick = Math.random() * 2 * Math.PI;
-      vx = Math.cos(kick) * 15;
-      vy = Math.sin(kick) * 15;
-    }
-    if (!resting && now > movingUntil) {
-      resting = true;
-      restingUntil = now + 3000 + Math.random() * 5000;
-    }
-    if (resting) {
-      moth.classList.add("moth-resting");
-      var settle = Math.exp(-3 * dt);
-      vx *= settle;
-      vy *= settle;
-    } else {
-      moth.classList.remove("moth-resting");
-      var sigma = 35;
-      var kickScale = sigma * Math.sqrt(dt);
-      vx += randn() * kickScale;
-      vy += randn() * kickScale;
-      var damp = Math.exp(-0.9 * dt);
-      vx *= damp;
-      vy *= damp;
-      var speed = Math.sqrt(vx * vx + vy * vy);
-      var maxSpeed = now < boostUntil ? 200 : 60;
-      if (speed > maxSpeed) {
-        vx = (vx / speed) * maxSpeed;
-        vy = (vy / speed) * maxSpeed;
-      }
-      if (Math.abs(vx) > 5) {
-        moth.style.transform = "scaleX(" + (vx < 0 ? -1 : 1) + ")";
-      }
-      if (speed > 10) {
-        if (now >= nextPuff) {
-          spawnPuff(x + 23, y + 16);
-          nextPuff = now + 140;
-        }
-      }
-    }
-    x += vx * dt;
-    y += vy * dt;
-    var margin = 20;
-    if (x < margin) { x = margin; vx = Math.abs(vx); }
-    if (x > window.innerWidth - 70) { x = window.innerWidth - 70; vx = -Math.abs(vx); }
-    if (y < margin) { y = margin; vy = Math.abs(vy); }
-    if (y > window.innerHeight - 60) { y = window.innerHeight - 60; vy = -Math.abs(vy); }
-    moth.style.left = x + "px";
-    moth.style.top = y + "px";
-    requestAnimationFrame(frame);
-  }
-  requestAnimationFrame(frame);
 })();

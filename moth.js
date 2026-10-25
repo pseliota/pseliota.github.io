@@ -156,55 +156,243 @@
     "}"
   ].join("\n");
 
-  var smokeComputeShader = [
+  var smokeTargetShader = [
     "struct Params { damping: f32, gridW: f32, gridH: f32, time: f32 }",
-    "struct Disturb { pos: vec2<f32>, amp: f32, radius: f32 }",
-    "struct Disturbs { items: array<Disturb, 4> }",
-    "struct SmokeParams { center: vec2<f32>, pxPerCell: vec2<f32>, alpha: f32, seed: f32, pad: vec2<f32> }",
-    "@group(0) @binding(0) var<storage, read> cur: array<f32>;",
-    "@group(0) @binding(1) var<storage, read_write> outBuf: array<f32>;",
+    "struct SmokeParams { center: vec2<f32>, pxPerCell: vec2<f32>, alpha: f32, seed: f32, flap: vec2<f32> }",
+    "@group(0) @binding(0) var<storage, read_write> tgtBuf: array<f32>;",
+    "@group(0) @binding(1) var<uniform> smoke: SmokeParams;",
     "@group(0) @binding(2) var<uniform> params: Params;",
-    "@group(0) @binding(3) var<uniform> disturbs: Disturbs;",
-    "@group(0) @binding(4) var<uniform> smoke: SmokeParams;",
-    "fn cross2(a: vec2<f32>, b: vec2<f32>) -> f32 { return a.x * b.y - a.y * b.x; }",
     "fn distSeg(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>) -> f32 {",
     "  let ab = b - a;",
     "  let t = clamp(dot(p - a, ab) / dot(ab, ab), 0.0, 1.0);",
     "  return distance(p, a + ab * t);",
     "}",
-    "fn insideConvex(p: vec2<f32>, v0: vec2<f32>, v1: vec2<f32>, v2: vec2<f32>, v3: vec2<f32>, v4: vec2<f32>) -> bool {",
-    "  let c0 = cross2(v1 - v0, p - v0);",
-    "  let c1 = cross2(v2 - v1, p - v1);",
-    "  let c2 = cross2(v3 - v2, p - v2);",
-    "  let c3 = cross2(v4 - v3, p - v3);",
-    "  let c4 = cross2(v0 - v4, p - v4);",
-    "  return (c0 >= 0.0 && c1 >= 0.0 && c2 >= 0.0 && c3 >= 0.0 && c4 >= 0.0) || (c0 <= 0.0 && c1 <= 0.0 && c2 <= 0.0 && c3 <= 0.0 && c4 <= 0.0);",
-    "}",
-    "fn wingOutlineDist(p: vec2<f32>, v0: vec2<f32>, v1: vec2<f32>, v2: vec2<f32>, v3: vec2<f32>, v4: vec2<f32>) -> f32 {",
-    "  var d = distSeg(p, v0, v1);",
-    "  d = min(d, distSeg(p, v1, v2));",
-    "  d = min(d, distSeg(p, v2, v3));",
-    "  d = min(d, distSeg(p, v3, v4));",
-    "  d = min(d, distSeg(p, v4, v0));",
-    "  return d;",
-    "}",
-    "fn mothTarget(p: vec2<f32>) -> f32 {",
-    "  if (abs(p.x) > 90.0 || abs(p.y) > 50.0) { return 0.0; }",
+    "fn mothTarget(p: vec2<f32>, flap: vec2<f32>) -> f32 {",
+    "  if (abs(p.x) > 85.0 || p.y > 50.0 || p.y < -65.0) { return 0.0; }",
+    "  let cosFore = max(cos(flap.x), 0.2);",
+    "  let cosHind = max(cos(flap.y), 0.2);",
+    "  let pF = vec2<f32>(p.x / cosFore, p.y);",
+    "  let pH = vec2<f32>(p.x / cosHind, p.y);",
+    "  var insideForeL = false; var outlineForeL = 999.0;",
+    "  if (pF.x < 5.0 && pF.x > -85.0 && pF.y > -20.0 && pF.y < 40.0) {",
+    "      if ((16.0 > pF.y) != (29.0 > pF.y)) {",
+    "        if (pF.x < (-18.0 - (0.0)) * (pF.y - 16.0) / (29.0 - 16.0) + 0.0) { insideForeL = !insideForeL; }",
+    "      }",
+    "      outlineForeL = min(outlineForeL, distSeg(p, vec2<f32>(0.0 * cosFore, 16.0), vec2<f32>(-18.0 * cosFore, 29.0)));",
+    "      if ((29.0 > pF.y) != (34.0 > pF.y)) {",
+    "        if (pF.x < (-40.0 - (-18.0)) * (pF.y - 29.0) / (34.0 - 29.0) + -18.0) { insideForeL = !insideForeL; }",
+    "      }",
+    "      outlineForeL = min(outlineForeL, distSeg(p, vec2<f32>(-18.0 * cosFore, 29.0), vec2<f32>(-40.0 * cosFore, 34.0)));",
+    "      if ((34.0 > pF.y) != (29.0 > pF.y)) {",
+    "        if (pF.x < (-60.0 - (-40.0)) * (pF.y - 34.0) / (29.0 - 34.0) + -40.0) { insideForeL = !insideForeL; }",
+    "      }",
+    "      outlineForeL = min(outlineForeL, distSeg(p, vec2<f32>(-40.0 * cosFore, 34.0), vec2<f32>(-60.0 * cosFore, 29.0)));",
+    "      if ((29.0 > pF.y) != (17.0 > pF.y)) {",
+    "        if (pF.x < (-73.0 - (-60.0)) * (pF.y - 29.0) / (17.0 - 29.0) + -60.0) { insideForeL = !insideForeL; }",
+    "      }",
+    "      outlineForeL = min(outlineForeL, distSeg(p, vec2<f32>(-60.0 * cosFore, 29.0), vec2<f32>(-73.0 * cosFore, 17.0)));",
+    "      if ((17.0 > pF.y) != (9.0 > pF.y)) {",
+    "        if (pF.x < (-69.0 - (-73.0)) * (pF.y - 17.0) / (9.0 - 17.0) + -73.0) { insideForeL = !insideForeL; }",
+    "      }",
+    "      outlineForeL = min(outlineForeL, distSeg(p, vec2<f32>(-73.0 * cosFore, 17.0), vec2<f32>(-69.0 * cosFore, 9.0)));",
+    "      if ((9.0 > pF.y) != (1.0 > pF.y)) {",
+    "        if (pF.x < (-73.0 - (-69.0)) * (pF.y - 9.0) / (1.0 - 9.0) + -69.0) { insideForeL = !insideForeL; }",
+    "      }",
+    "      outlineForeL = min(outlineForeL, distSeg(p, vec2<f32>(-69.0 * cosFore, 9.0), vec2<f32>(-73.0 * cosFore, 1.0)));",
+    "      if ((1.0 > pF.y) != (-7.0 > pF.y)) {",
+    "        if (pF.x < (-66.0 - (-73.0)) * (pF.y - 1.0) / (-7.0 - 1.0) + -73.0) { insideForeL = !insideForeL; }",
+    "      }",
+    "      outlineForeL = min(outlineForeL, distSeg(p, vec2<f32>(-73.0 * cosFore, 1.0), vec2<f32>(-66.0 * cosFore, -7.0)));",
+    "      if ((-7.0 > pF.y) != (-14.0 > pF.y)) {",
+    "        if (pF.x < (-54.0 - (-66.0)) * (pF.y - -7.0) / (-14.0 - -7.0) + -66.0) { insideForeL = !insideForeL; }",
+    "      }",
+    "      outlineForeL = min(outlineForeL, distSeg(p, vec2<f32>(-66.0 * cosFore, -7.0), vec2<f32>(-54.0 * cosFore, -14.0)));",
+    "      if ((-14.0 > pF.y) != (-17.0 > pF.y)) {",
+    "        if (pF.x < (-36.0 - (-54.0)) * (pF.y - -14.0) / (-17.0 - -14.0) + -54.0) { insideForeL = !insideForeL; }",
+    "      }",
+    "      outlineForeL = min(outlineForeL, distSeg(p, vec2<f32>(-54.0 * cosFore, -14.0), vec2<f32>(-36.0 * cosFore, -17.0)));",
+    "      if ((-17.0 > pF.y) != (-14.0 > pF.y)) {",
+    "        if (pF.x < (-16.0 - (-36.0)) * (pF.y - -17.0) / (-14.0 - -17.0) + -36.0) { insideForeL = !insideForeL; }",
+    "      }",
+    "      outlineForeL = min(outlineForeL, distSeg(p, vec2<f32>(-36.0 * cosFore, -17.0), vec2<f32>(-16.0 * cosFore, -14.0)));",
+    "      if ((-14.0 > pF.y) != (-5.0 > pF.y)) {",
+    "        if (pF.x < (0.0 - (-16.0)) * (pF.y - -14.0) / (-5.0 - -14.0) + -16.0) { insideForeL = !insideForeL; }",
+    "      }",
+    "      outlineForeL = min(outlineForeL, distSeg(p, vec2<f32>(-16.0 * cosFore, -14.0), vec2<f32>(0.0 * cosFore, -5.0)));",
+    "      if ((-5.0 > pF.y) != (16.0 > pF.y)) {",
+    "        if (pF.x < (0.0 - (0.0)) * (pF.y - -5.0) / (16.0 - -5.0) + 0.0) { insideForeL = !insideForeL; }",
+    "      }",
+    "      outlineForeL = min(outlineForeL, distSeg(p, vec2<f32>(0.0 * cosFore, -5.0), vec2<f32>(0.0 * cosFore, 16.0)));",
+    "  }",
+    "  var insideForeR = false; var outlineForeR = 999.0;",
+    "  if (pF.x > -5.0 && pF.x < 85.0 && pF.y > -20.0 && pF.y < 40.0) {",
+    "      if ((16.0 > pF.y) != (29.0 > pF.y)) {",
+    "        if (pF.x < (18.0 - (0.0)) * (pF.y - 16.0) / (29.0 - 16.0) + 0.0) { insideForeR = !insideForeR; }",
+    "      }",
+    "      outlineForeR = min(outlineForeR, distSeg(p, vec2<f32>(0.0 * cosFore, 16.0), vec2<f32>(18.0 * cosFore, 29.0)));",
+    "      if ((29.0 > pF.y) != (34.0 > pF.y)) {",
+    "        if (pF.x < (40.0 - (18.0)) * (pF.y - 29.0) / (34.0 - 29.0) + 18.0) { insideForeR = !insideForeR; }",
+    "      }",
+    "      outlineForeR = min(outlineForeR, distSeg(p, vec2<f32>(18.0 * cosFore, 29.0), vec2<f32>(40.0 * cosFore, 34.0)));",
+    "      if ((34.0 > pF.y) != (29.0 > pF.y)) {",
+    "        if (pF.x < (60.0 - (40.0)) * (pF.y - 34.0) / (29.0 - 34.0) + 40.0) { insideForeR = !insideForeR; }",
+    "      }",
+    "      outlineForeR = min(outlineForeR, distSeg(p, vec2<f32>(40.0 * cosFore, 34.0), vec2<f32>(60.0 * cosFore, 29.0)));",
+    "      if ((29.0 > pF.y) != (17.0 > pF.y)) {",
+    "        if (pF.x < (73.0 - (60.0)) * (pF.y - 29.0) / (17.0 - 29.0) + 60.0) { insideForeR = !insideForeR; }",
+    "      }",
+    "      outlineForeR = min(outlineForeR, distSeg(p, vec2<f32>(60.0 * cosFore, 29.0), vec2<f32>(73.0 * cosFore, 17.0)));",
+    "      if ((17.0 > pF.y) != (9.0 > pF.y)) {",
+    "        if (pF.x < (69.0 - (73.0)) * (pF.y - 17.0) / (9.0 - 17.0) + 73.0) { insideForeR = !insideForeR; }",
+    "      }",
+    "      outlineForeR = min(outlineForeR, distSeg(p, vec2<f32>(73.0 * cosFore, 17.0), vec2<f32>(69.0 * cosFore, 9.0)));",
+    "      if ((9.0 > pF.y) != (1.0 > pF.y)) {",
+    "        if (pF.x < (73.0 - (69.0)) * (pF.y - 9.0) / (1.0 - 9.0) + 69.0) { insideForeR = !insideForeR; }",
+    "      }",
+    "      outlineForeR = min(outlineForeR, distSeg(p, vec2<f32>(69.0 * cosFore, 9.0), vec2<f32>(73.0 * cosFore, 1.0)));",
+    "      if ((1.0 > pF.y) != (-7.0 > pF.y)) {",
+    "        if (pF.x < (66.0 - (73.0)) * (pF.y - 1.0) / (-7.0 - 1.0) + 73.0) { insideForeR = !insideForeR; }",
+    "      }",
+    "      outlineForeR = min(outlineForeR, distSeg(p, vec2<f32>(73.0 * cosFore, 1.0), vec2<f32>(66.0 * cosFore, -7.0)));",
+    "      if ((-7.0 > pF.y) != (-14.0 > pF.y)) {",
+    "        if (pF.x < (54.0 - (66.0)) * (pF.y - -7.0) / (-14.0 - -7.0) + 66.0) { insideForeR = !insideForeR; }",
+    "      }",
+    "      outlineForeR = min(outlineForeR, distSeg(p, vec2<f32>(66.0 * cosFore, -7.0), vec2<f32>(54.0 * cosFore, -14.0)));",
+    "      if ((-14.0 > pF.y) != (-17.0 > pF.y)) {",
+    "        if (pF.x < (36.0 - (54.0)) * (pF.y - -14.0) / (-17.0 - -14.0) + 54.0) { insideForeR = !insideForeR; }",
+    "      }",
+    "      outlineForeR = min(outlineForeR, distSeg(p, vec2<f32>(54.0 * cosFore, -14.0), vec2<f32>(36.0 * cosFore, -17.0)));",
+    "      if ((-17.0 > pF.y) != (-14.0 > pF.y)) {",
+    "        if (pF.x < (16.0 - (36.0)) * (pF.y - -17.0) / (-14.0 - -17.0) + 36.0) { insideForeR = !insideForeR; }",
+    "      }",
+    "      outlineForeR = min(outlineForeR, distSeg(p, vec2<f32>(36.0 * cosFore, -17.0), vec2<f32>(16.0 * cosFore, -14.0)));",
+    "      if ((-14.0 > pF.y) != (-5.0 > pF.y)) {",
+    "        if (pF.x < (0.0 - (16.0)) * (pF.y - -14.0) / (-5.0 - -14.0) + 16.0) { insideForeR = !insideForeR; }",
+    "      }",
+    "      outlineForeR = min(outlineForeR, distSeg(p, vec2<f32>(16.0 * cosFore, -14.0), vec2<f32>(0.0 * cosFore, -5.0)));",
+    "      if ((-5.0 > pF.y) != (16.0 > pF.y)) {",
+    "        if (pF.x < (0.0 - (0.0)) * (pF.y - -5.0) / (16.0 - -5.0) + 0.0) { insideForeR = !insideForeR; }",
+    "      }",
+    "      outlineForeR = min(outlineForeR, distSeg(p, vec2<f32>(0.0 * cosFore, -5.0), vec2<f32>(0.0 * cosFore, 16.0)));",
+    "  }",
+    "  var insideHindL = false; var outlineHindL = 999.0;",
+    "  if (pH.x < 5.0 && pH.x > -85.0 && pH.y > -65.0 && pH.y < 0.0) {",
+    "      if ((-5.0 > pH.y) != (-15.0 > pH.y)) {",
+    "        if (pH.x < (-30.0 - (0.0)) * (pH.y - -5.0) / (-15.0 - -5.0) + 0.0) { insideHindL = !insideHindL; }",
+    "      }",
+    "      outlineHindL = min(outlineHindL, distSeg(p, vec2<f32>(0.0 * cosHind, -5.0), vec2<f32>(-30.0 * cosHind, -15.0)));",
+    "      if ((-15.0 > pH.y) != (-21.0 > pH.y)) {",
+    "        if (pH.x < (-50.0 - (-30.0)) * (pH.y - -15.0) / (-21.0 - -15.0) + -30.0) { insideHindL = !insideHindL; }",
+    "      }",
+    "      outlineHindL = min(outlineHindL, distSeg(p, vec2<f32>(-30.0 * cosHind, -15.0), vec2<f32>(-50.0 * cosHind, -21.0)));",
+    "      if ((-21.0 > pH.y) != (-30.0 > pH.y)) {",
+    "        if (pH.x < (-62.0 - (-50.0)) * (pH.y - -21.0) / (-30.0 - -21.0) + -50.0) { insideHindL = !insideHindL; }",
+    "      }",
+    "      outlineHindL = min(outlineHindL, distSeg(p, vec2<f32>(-50.0 * cosHind, -21.0), vec2<f32>(-62.0 * cosHind, -30.0)));",
+    "      if ((-30.0 > pH.y) != (-38.0 > pH.y)) {",
+    "        if (pH.x < (-66.0 - (-62.0)) * (pH.y - -30.0) / (-38.0 - -30.0) + -62.0) { insideHindL = !insideHindL; }",
+    "      }",
+    "      outlineHindL = min(outlineHindL, distSeg(p, vec2<f32>(-62.0 * cosHind, -30.0), vec2<f32>(-66.0 * cosHind, -38.0)));",
+    "      if ((-38.0 > pH.y) != (-46.0 > pH.y)) {",
+    "        if (pH.x < (-60.0 - (-66.0)) * (pH.y - -38.0) / (-46.0 - -38.0) + -66.0) { insideHindL = !insideHindL; }",
+    "      }",
+    "      outlineHindL = min(outlineHindL, distSeg(p, vec2<f32>(-66.0 * cosHind, -38.0), vec2<f32>(-60.0 * cosHind, -46.0)));",
+    "      if ((-46.0 > pH.y) != (-53.0 > pH.y)) {",
+    "        if (pH.x < (-50.0 - (-60.0)) * (pH.y - -46.0) / (-53.0 - -46.0) + -60.0) { insideHindL = !insideHindL; }",
+    "      }",
+    "      outlineHindL = min(outlineHindL, distSeg(p, vec2<f32>(-60.0 * cosHind, -46.0), vec2<f32>(-50.0 * cosHind, -53.0)));",
+    "      if ((-53.0 > pH.y) != (-56.0 > pH.y)) {",
+    "        if (pH.x < (-32.0 - (-50.0)) * (pH.y - -53.0) / (-56.0 - -53.0) + -50.0) { insideHindL = !insideHindL; }",
+    "      }",
+    "      outlineHindL = min(outlineHindL, distSeg(p, vec2<f32>(-50.0 * cosHind, -53.0), vec2<f32>(-32.0 * cosHind, -56.0)));",
+    "      if ((-56.0 > pH.y) != (-51.0 > pH.y)) {",
+    "        if (pH.x < (-16.0 - (-32.0)) * (pH.y - -56.0) / (-51.0 - -56.0) + -32.0) { insideHindL = !insideHindL; }",
+    "      }",
+    "      outlineHindL = min(outlineHindL, distSeg(p, vec2<f32>(-32.0 * cosHind, -56.0), vec2<f32>(-16.0 * cosHind, -51.0)));",
+    "      if ((-51.0 > pH.y) != (-42.0 > pH.y)) {",
+    "        if (pH.x < (0.0 - (-16.0)) * (pH.y - -51.0) / (-42.0 - -51.0) + -16.0) { insideHindL = !insideHindL; }",
+    "      }",
+    "      outlineHindL = min(outlineHindL, distSeg(p, vec2<f32>(-16.0 * cosHind, -51.0), vec2<f32>(0.0 * cosHind, -42.0)));",
+    "      if ((-42.0 > pH.y) != (-5.0 > pH.y)) {",
+    "        if (pH.x < (0.0 - (0.0)) * (pH.y - -42.0) / (-5.0 - -42.0) + 0.0) { insideHindL = !insideHindL; }",
+    "      }",
+    "      outlineHindL = min(outlineHindL, distSeg(p, vec2<f32>(0.0 * cosHind, -42.0), vec2<f32>(0.0 * cosHind, -5.0)));",
+    "  }",
+    "  var insideHindR = false; var outlineHindR = 999.0;",
+    "  if (pH.x > -5.0 && pH.x < 85.0 && pH.y > -65.0 && pH.y < 0.0) {",
+    "      if ((-5.0 > pH.y) != (-15.0 > pH.y)) {",
+    "        if (pH.x < (30.0 - (0.0)) * (pH.y - -5.0) / (-15.0 - -5.0) + 0.0) { insideHindR = !insideHindR; }",
+    "      }",
+    "      outlineHindR = min(outlineHindR, distSeg(p, vec2<f32>(0.0 * cosHind, -5.0), vec2<f32>(30.0 * cosHind, -15.0)));",
+    "      if ((-15.0 > pH.y) != (-21.0 > pH.y)) {",
+    "        if (pH.x < (50.0 - (30.0)) * (pH.y - -15.0) / (-21.0 - -15.0) + 30.0) { insideHindR = !insideHindR; }",
+    "      }",
+    "      outlineHindR = min(outlineHindR, distSeg(p, vec2<f32>(30.0 * cosHind, -15.0), vec2<f32>(50.0 * cosHind, -21.0)));",
+    "      if ((-21.0 > pH.y) != (-30.0 > pH.y)) {",
+    "        if (pH.x < (62.0 - (50.0)) * (pH.y - -21.0) / (-30.0 - -21.0) + 50.0) { insideHindR = !insideHindR; }",
+    "      }",
+    "      outlineHindR = min(outlineHindR, distSeg(p, vec2<f32>(50.0 * cosHind, -21.0), vec2<f32>(62.0 * cosHind, -30.0)));",
+    "      if ((-30.0 > pH.y) != (-38.0 > pH.y)) {",
+    "        if (pH.x < (66.0 - (62.0)) * (pH.y - -30.0) / (-38.0 - -30.0) + 62.0) { insideHindR = !insideHindR; }",
+    "      }",
+    "      outlineHindR = min(outlineHindR, distSeg(p, vec2<f32>(62.0 * cosHind, -30.0), vec2<f32>(66.0 * cosHind, -38.0)));",
+    "      if ((-38.0 > pH.y) != (-46.0 > pH.y)) {",
+    "        if (pH.x < (60.0 - (66.0)) * (pH.y - -38.0) / (-46.0 - -38.0) + 66.0) { insideHindR = !insideHindR; }",
+    "      }",
+    "      outlineHindR = min(outlineHindR, distSeg(p, vec2<f32>(66.0 * cosHind, -38.0), vec2<f32>(60.0 * cosHind, -46.0)));",
+    "      if ((-46.0 > pH.y) != (-53.0 > pH.y)) {",
+    "        if (pH.x < (50.0 - (60.0)) * (pH.y - -46.0) / (-53.0 - -46.0) + 60.0) { insideHindR = !insideHindR; }",
+    "      }",
+    "      outlineHindR = min(outlineHindR, distSeg(p, vec2<f32>(60.0 * cosHind, -46.0), vec2<f32>(50.0 * cosHind, -53.0)));",
+    "      if ((-53.0 > pH.y) != (-56.0 > pH.y)) {",
+    "        if (pH.x < (32.0 - (50.0)) * (pH.y - -53.0) / (-56.0 - -53.0) + 50.0) { insideHindR = !insideHindR; }",
+    "      }",
+    "      outlineHindR = min(outlineHindR, distSeg(p, vec2<f32>(50.0 * cosHind, -53.0), vec2<f32>(32.0 * cosHind, -56.0)));",
+    "      if ((-56.0 > pH.y) != (-51.0 > pH.y)) {",
+    "        if (pH.x < (16.0 - (32.0)) * (pH.y - -56.0) / (-51.0 - -56.0) + 32.0) { insideHindR = !insideHindR; }",
+    "      }",
+    "      outlineHindR = min(outlineHindR, distSeg(p, vec2<f32>(32.0 * cosHind, -56.0), vec2<f32>(16.0 * cosHind, -51.0)));",
+    "      if ((-51.0 > pH.y) != (-42.0 > pH.y)) {",
+    "        if (pH.x < (0.0 - (16.0)) * (pH.y - -51.0) / (-42.0 - -51.0) + 16.0) { insideHindR = !insideHindR; }",
+    "      }",
+    "      outlineHindR = min(outlineHindR, distSeg(p, vec2<f32>(16.0 * cosHind, -51.0), vec2<f32>(0.0 * cosHind, -42.0)));",
+    "      if ((-42.0 > pH.y) != (-5.0 > pH.y)) {",
+    "        if (pH.x < (0.0 - (0.0)) * (pH.y - -42.0) / (-5.0 - -42.0) + 0.0) { insideHindR = !insideHindR; }",
+    "      }",
+    "      outlineHindR = min(outlineHindR, distSeg(p, vec2<f32>(0.0 * cosHind, -42.0), vec2<f32>(0.0 * cosHind, -5.0)));",
+    "  }",
     "  var tgt = 0.0;",
-    "  let leftInside = insideConvex(p, vec2<f32>(0.0, 14.0), vec2<f32>(-30.0, 30.0), vec2<f32>(-70.0, 2.0), vec2<f32>(-45.0, -30.0), vec2<f32>(0.0, -14.0));",
-    "  let rightInside = insideConvex(p, vec2<f32>(0.0, 14.0), vec2<f32>(30.0, 30.0), vec2<f32>(70.0, 2.0), vec2<f32>(45.0, -30.0), vec2<f32>(0.0, -14.0));",
-    "  if (leftInside || rightInside) { tgt = max(tgt, 0.35); }",
-    "  let outline = min(",
-    "    wingOutlineDist(p, vec2<f32>(0.0, 14.0), vec2<f32>(-30.0, 30.0), vec2<f32>(-70.0, 2.0), vec2<f32>(-45.0, -30.0), vec2<f32>(0.0, -14.0)),",
-    "    wingOutlineDist(p, vec2<f32>(0.0, 14.0), vec2<f32>(30.0, 30.0), vec2<f32>(70.0, 2.0), vec2<f32>(45.0, -30.0), vec2<f32>(0.0, -14.0))",
-    "  );",
+    "  if (insideForeL || insideForeR || insideHindL || insideHindR) { tgt = max(tgt, 0.35); }",
+    "  let outline = min(min(outlineForeL, outlineForeR), min(outlineHindL, outlineHindR));",
     "  tgt = max(tgt, exp(-outline * outline / 32.0));",
-    "  let body = distSeg(p, vec2<f32>(0.0, 18.0), vec2<f32>(0.0, -18.0));",
-    "  if (body < 6.0) { tgt = max(tgt, 0.85); }",
-    "  let ant = min(distSeg(p, vec2<f32>(0.0, 18.0), vec2<f32>(-20.0, 36.0)), distSeg(p, vec2<f32>(0.0, 18.0), vec2<f32>(20.0, 36.0)));",
-    "  if (ant < 2.5) { tgt = max(tgt, 0.6 * exp(-ant * ant / 8.0)); }",
+    "  let body = distSeg(p, vec2<f32>(0.0, 20.0), vec2<f32>(0.0, -38.0));",
+    "  if (body < 5.0) { tgt = max(tgt, 0.85); }",
+    "  let ant = min(min(distSeg(p, vec2<f32>(0.0, 20.0), vec2<f32>(-8.0, 32.0)), distSeg(p, vec2<f32>(-8.0, 32.0), vec2<f32>(-18.0, 42.0))), min(distSeg(p, vec2<f32>(0.0, 20.0), vec2<f32>(8.0, 32.0)), distSeg(p, vec2<f32>(8.0, 32.0), vec2<f32>(18.0, 42.0))));",
+    "  if (ant < 2.0) { tgt = max(tgt, 0.6 * exp(-ant * ant / 8.0)); }",
     "  return tgt;",
     "}",
+    "@compute @workgroup_size(16, 16)",
+    "fn main(@builtin(global_invocation_id) id: vec3<u32>) {",
+    "  let w = u32(params.gridW);",
+    "  let h = u32(params.gridH);",
+    "  if (id.x >= w || id.y >= h) { return; }",
+    "  let idx = id.y * w + id.x;",
+    "  let local = vec2<f32>((f32(id.x) - smoke.center.x) * smoke.pxPerCell.x, (f32(id.y) - smoke.center.y) * smoke.pxPerCell.y);",
+    "  tgtBuf[idx] = mothTarget(local, smoke.flap);",
+    "}"
+  ].join("\n");
+
+  var smokeWaveShader = [
+    "struct Params { damping: f32, gridW: f32, gridH: f32, time: f32 }",
+    "struct Disturb { pos: vec2<f32>, amp: f32, radius: f32 }",
+    "struct Disturbs { items: array<Disturb, 4> }",
+    "struct SmokeParams { center: vec2<f32>, pxPerCell: vec2<f32>, alpha: f32, seed: f32, flap: vec2<f32> }",
+    "@group(0) @binding(0) var<storage, read> cur: array<f32>;",
+    "@group(0) @binding(1) var<storage, read_write> outBuf: array<f32>;",
+    "@group(0) @binding(2) var<uniform> params: Params;",
+    "@group(0) @binding(3) var<uniform> disturbs: Disturbs;",
+    "@group(0) @binding(4) var<uniform> smoke: SmokeParams;",
+    "@group(0) @binding(5) var<storage, read> tgtBuf: array<f32>;",
     "fn hash(n: f32) -> f32 { return fract(sin(n) * 43758.5453); }",
     "@compute @workgroup_size(16, 16)",
     "fn main(@builtin(global_invocation_id) id: vec3<u32>) {",
@@ -220,20 +408,16 @@
     "  let right = cur[id.y * w + xp];",
     "  let up = cur[ym * w + id.x];",
     "  let down = cur[yp * w + id.x];",
-    "  let local = vec2<f32>((f32(id.x) - smoke.center.x) * smoke.pxPerCell.x, (f32(id.y) - smoke.center.y) * smoke.pxPerCell.y);",
-    "  let tgt = mothTarget(local);",
-    "  let tgtL = mothTarget(local - vec2<f32>(smoke.pxPerCell.x, 0.0));",
-    "  let tgtR = mothTarget(local + vec2<f32>(smoke.pxPerCell.x, 0.0));",
-    "  let tgtD = mothTarget(local - vec2<f32>(0.0, smoke.pxPerCell.y));",
-    "  let tgtU = mothTarget(local + vec2<f32>(0.0, smoke.pxPerCell.y));",
-    "  let eL = left - tgtL;",
-    "  let eR = right - tgtR;",
-    "  let eD = up - tgtD;",
-    "  let eU = down - tgtU;",
+    "  let tgt = tgtBuf[idx];",
+    "  let eL = left - tgtBuf[id.y * w + xm];",
+    "  let eR = right - tgtBuf[id.y * w + xp];",
+    "  let eUp = up - tgtBuf[ym * w + id.x];",
+    "  let eDown = down - tgtBuf[yp * w + id.x];",
     "  let eP = outBuf[idx] - tgt;",
-    "  var eNext = (eL + eR + eD + eU) * 0.5 - eP;",
+    "  var eNext = (eL + eR + eUp + eDown) * 0.5 - eP;",
     "  eNext = eNext * params.damping;",
-    "  if (abs(local.x) < 90.0 && abs(local.y) < 50.0) {",
+    "  let local = vec2<f32>((f32(id.x) - smoke.center.x) * smoke.pxPerCell.x, (f32(id.y) - smoke.center.y) * smoke.pxPerCell.y);",
+    "  if (abs(local.x) < 85.0 && local.y > -65.0 && local.y < 50.0) {",
     "    eNext = eNext + (hash(f32(idx) * 0.123 + smoke.seed) - 0.5) * 0.02;",
     "    for (var i = 0; i < 4; i = i + 1) {",
     "      let d = disturbs.items[i];",
@@ -315,6 +499,7 @@
     var bufferB = device.createBuffer({ size: cellCount * 4, usage: GPUBufferUsage.STORAGE });
     var smokeA = device.createBuffer({ size: cellCount * 4, usage: GPUBufferUsage.STORAGE });
     var smokeB = device.createBuffer({ size: cellCount * 4, usage: GPUBufferUsage.STORAGE });
+    var targetBuf = device.createBuffer({ size: cellCount * 4, usage: GPUBufferUsage.STORAGE });
     var waterParamsBuffer = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     device.queue.writeBuffer(waterParamsBuffer, 0, new Float32Array([0.97, gridW, gridH, 0]));
     var disturbsBuffer = device.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
@@ -322,12 +507,14 @@
 
     var waterComputeModule = device.createShaderModule({ code: waterComputeShader });
     var waterRenderModule = device.createShaderModule({ code: waterRenderShader });
-    var smokeComputeModule = device.createShaderModule({ code: smokeComputeShader });
+    var smokeTargetModule = device.createShaderModule({ code: smokeTargetShader });
+    var smokeWaveModule = device.createShaderModule({ code: smokeWaveShader });
     var smokeRenderModule = device.createShaderModule({ code: smokeRenderShader });
     var infos = await Promise.all([
       waterComputeModule.getCompilationInfo(),
       waterRenderModule.getCompilationInfo(),
-      smokeComputeModule.getCompilationInfo(),
+      smokeTargetModule.getCompilationInfo(),
+      smokeWaveModule.getCompilationInfo(),
       smokeRenderModule.getCompilationInfo()
     ]);
     for (var ii = 0; ii < infos.length; ii++) {
@@ -341,7 +528,8 @@
       fragment: { module: waterRenderModule, entryPoint: "fs", targets: [{ format: format }] },
       primitive: { topology: "triangle-list" }
     });
-    var smokeComputePipeline = device.createComputePipeline({ layout: "auto", compute: { module: smokeComputeModule, entryPoint: "main" } });
+    var smokeTargetPipeline = device.createComputePipeline({ layout: "auto", compute: { module: smokeTargetModule, entryPoint: "main" } });
+    var smokeWavePipeline = device.createComputePipeline({ layout: "auto", compute: { module: smokeWaveModule, entryPoint: "main" } });
     var smokeRenderPipeline = device.createRenderPipeline({
       layout: "auto",
       vertex: { module: smokeRenderModule, entryPoint: "vs" },
@@ -369,19 +557,26 @@
       { binding: 0, resource: { buffer: bufferB } },
       { binding: 1, resource: { buffer: waterParamsBuffer } }
     ]});
-    var smokeComputeGroupA = device.createBindGroup({ layout: smokeComputePipeline.getBindGroupLayout(0), entries: [
+    var smokeTargetGroup = device.createBindGroup({ layout: smokeTargetPipeline.getBindGroupLayout(0), entries: [
+      { binding: 0, resource: { buffer: targetBuf } },
+      { binding: 1, resource: { buffer: smokeParamsBuffer } },
+      { binding: 2, resource: { buffer: waterParamsBuffer } }
+    ]});
+    var smokeWaveGroupA = device.createBindGroup({ layout: smokeWavePipeline.getBindGroupLayout(0), entries: [
       { binding: 0, resource: { buffer: smokeA } },
       { binding: 1, resource: { buffer: smokeB } },
       { binding: 2, resource: { buffer: waterParamsBuffer } },
       { binding: 3, resource: { buffer: disturbsBuffer } },
-      { binding: 4, resource: { buffer: smokeParamsBuffer } }
+      { binding: 4, resource: { buffer: smokeParamsBuffer } },
+      { binding: 5, resource: { buffer: targetBuf } }
     ]});
-    var smokeComputeGroupB = device.createBindGroup({ layout: smokeComputePipeline.getBindGroupLayout(0), entries: [
+    var smokeWaveGroupB = device.createBindGroup({ layout: smokeWavePipeline.getBindGroupLayout(0), entries: [
       { binding: 0, resource: { buffer: smokeB } },
       { binding: 1, resource: { buffer: smokeA } },
       { binding: 2, resource: { buffer: waterParamsBuffer } },
       { binding: 3, resource: { buffer: disturbsBuffer } },
-      { binding: 4, resource: { buffer: smokeParamsBuffer } }
+      { binding: 4, resource: { buffer: smokeParamsBuffer } },
+      { binding: 5, resource: { buffer: targetBuf } }
     ]});
     var smokeRenderGroupA = device.createBindGroup({ layout: smokeRenderPipeline.getBindGroupLayout(0), entries: [
       { binding: 0, resource: { buffer: smokeA } },
@@ -395,24 +590,32 @@
     webgpuActive = true;
     window.__waterMode = "webgpu";
 
-    function smokeParamsFor(seed) {
+    function smokeParamsFor(seed, flapFore, flapHind) {
       var centerGridX = mothCenter.x / window.innerWidth * gridW;
       var centerGridY = (window.innerHeight - mothCenter.y) / window.innerHeight * gridH;
       var params = new Float32Array(8);
       params[0] = centerGridX; params[1] = centerGridY;
       params[2] = window.innerWidth / gridW; params[3] = window.innerHeight / gridH;
       params[4] = 0.04; params[5] = seed;
+      params[6] = flapFore; params[7] = flapHind;
       return params;
     }
 
     if (reduced) {
+      device.queue.writeBuffer(smokeParamsBuffer, 0, smokeParamsFor(0, 0.05, 0.05));
+      var encT = device.createCommandEncoder();
+      var tp0 = encT.beginComputePass();
+      tp0.setPipeline(smokeTargetPipeline);
+      tp0.setBindGroup(0, smokeTargetGroup);
+      tp0.dispatchWorkgroups(Math.ceil(gridW / 16), Math.ceil(gridH / 16));
+      tp0.end();
+      device.queue.submit([encT.finish()]);
       var smokeUseA0 = true;
       for (var ri = 0; ri < 200; ri++) {
-        device.queue.writeBuffer(smokeParamsBuffer, 0, smokeParamsFor(0));
         var enc0 = device.createCommandEncoder();
         var cp0 = enc0.beginComputePass();
-        cp0.setPipeline(smokeComputePipeline);
-        cp0.setBindGroup(0, smokeUseA0 ? smokeComputeGroupA : smokeComputeGroupB);
+        cp0.setPipeline(smokeWavePipeline);
+        cp0.setBindGroup(0, smokeUseA0 ? smokeWaveGroupA : smokeWaveGroupB);
         cp0.dispatchWorkgroups(Math.ceil(gridW / 16), Math.ceil(gridH / 16));
         cp0.end();
         device.queue.submit([enc0.finish()]);
@@ -437,6 +640,8 @@
     var smokeUseA = true;
     var last = performance.now();
     var seed = 0;
+    var flapAmp = 0;
+    var flapPhase = 0;
     function frame(now) {
       var dt = Math.min(0.05, (now - last) / 1000);
       last = now;
@@ -487,11 +692,21 @@
         disturbs[i * 4 + 2] = d.amp;
         disturbs[i * 4 + 3] = d.radius;
       }
+      if (!mothResting) { flapPhase += dt; }
+      var flapTargetAmp = mothResting ? 0 : 1.1;
+      flapAmp += (flapTargetAmp - flapAmp) * (1 - Math.exp(-3 * dt));
+      var flapFore = 0.05 + flapAmp * (0.5 - 0.5 * Math.cos(2 * Math.PI * 3 * flapPhase)) + 0.02 * Math.sin(now * 0.002);
+      var flapHind = 0.05 + flapAmp * (0.5 - 0.5 * Math.cos(2 * Math.PI * 3 * flapPhase - 0.6)) + 0.02 * Math.sin(now * 0.002);
       pendingDisturbs.length = 0;
       device.queue.writeBuffer(disturbsBuffer, 0, disturbs);
-      device.queue.writeBuffer(smokeParamsBuffer, 0, smokeParamsFor(seed));
+      device.queue.writeBuffer(smokeParamsBuffer, 0, smokeParamsFor(seed, flapFore, flapHind));
 
       var encoder = device.createCommandEncoder();
+      var smokeTargetPass = encoder.beginComputePass();
+      smokeTargetPass.setPipeline(smokeTargetPipeline);
+      smokeTargetPass.setBindGroup(0, smokeTargetGroup);
+      smokeTargetPass.dispatchWorkgroups(Math.ceil(gridW / 16), Math.ceil(gridH / 16));
+      smokeTargetPass.end();
       var waterComputePass = encoder.beginComputePass();
       waterComputePass.setPipeline(waterComputePipeline);
       waterComputePass.setBindGroup(0, useA ? waterComputeGroupA : waterComputeGroupB);
@@ -504,8 +719,8 @@
       waterPass.draw(3);
       waterPass.end();
       var smokeComputePass = encoder.beginComputePass();
-      smokeComputePass.setPipeline(smokeComputePipeline);
-      smokeComputePass.setBindGroup(0, smokeUseA ? smokeComputeGroupA : smokeComputeGroupB);
+      smokeComputePass.setPipeline(smokeWavePipeline);
+      smokeComputePass.setBindGroup(0, smokeUseA ? smokeWaveGroupA : smokeWaveGroupB);
       smokeComputePass.dispatchWorkgroups(Math.ceil(gridW / 16), Math.ceil(gridH / 16));
       smokeComputePass.end();
       smokeUseA = !smokeUseA;

@@ -220,24 +220,32 @@
     "  let right = cur[id.y * w + xp];",
     "  let up = cur[ym * w + id.x];",
     "  let down = cur[yp * w + id.x];",
-    "  var v = (left + right + up + down) * 0.5 - outBuf[idx];",
-    "  v = v * params.damping;",
     "  let local = vec2<f32>((f32(id.x) - smoke.center.x) * smoke.pxPerCell.x, (f32(id.y) - smoke.center.y) * smoke.pxPerCell.y);",
     "  let tgt = mothTarget(local);",
-    "  v = v + smoke.alpha * (tgt - cur[idx]);",
+    "  let tgtL = mothTarget(local - vec2<f32>(smoke.pxPerCell.x, 0.0));",
+    "  let tgtR = mothTarget(local + vec2<f32>(smoke.pxPerCell.x, 0.0));",
+    "  let tgtD = mothTarget(local - vec2<f32>(0.0, smoke.pxPerCell.y));",
+    "  let tgtU = mothTarget(local + vec2<f32>(0.0, smoke.pxPerCell.y));",
+    "  let eL = left - tgtL;",
+    "  let eR = right - tgtR;",
+    "  let eD = up - tgtD;",
+    "  let eU = down - tgtU;",
+    "  let eP = outBuf[idx] - tgt;",
+    "  var eNext = (eL + eR + eD + eU) * 0.5 - eP;",
+    "  eNext = eNext * params.damping;",
     "  if (abs(local.x) < 90.0 && abs(local.y) < 50.0) {",
-    "    v = v + (hash(f32(idx) * 0.123 + smoke.seed) - 0.5) * 0.04;",
+    "    eNext = eNext + (hash(f32(idx) * 0.123 + smoke.seed) - 0.5) * 0.02;",
     "    for (var i = 0; i < 4; i = i + 1) {",
     "      let d = disturbs.items[i];",
     "      if (d.amp != 0.0) {",
     "        let dist = distance(vec2<f32>(f32(id.x), f32(id.y)), d.pos);",
     "        if (dist < d.radius) {",
-    "          v = v + d.amp * 0.2 * exp(-dist * dist / (d.radius * d.radius * 0.25));",
+    "          eNext = eNext + d.amp * 0.2 * exp(-dist * dist / (d.radius * d.radius * 0.25));",
     "        }",
     "      }",
     "    }",
     "  }",
-    "  outBuf[idx] = clamp(v, -0.5, 1.5);",
+    "  outBuf[idx] = clamp(tgt + eNext, -0.5, 1.5);",
     "}"
   ].join("\n");
 
@@ -399,7 +407,7 @@
 
     if (reduced) {
       var smokeUseA0 = true;
-      for (var ri = 0; ri < 80; ri++) {
+      for (var ri = 0; ri < 200; ri++) {
         device.queue.writeBuffer(smokeParamsBuffer, 0, smokeParamsFor(0));
         var enc0 = device.createCommandEncoder();
         var cp0 = enc0.beginComputePass();

@@ -210,7 +210,9 @@
     "  let anchorWorld = params.center + vec2<f32>(anchor.x * params.flip, anchor.y);",
     "  var p = particles[i];",
     "  let drift = -params.k * (p.pos - anchorWorld);",
-    "  p.pos = p.pos + drift * params.dt + params.sigma * sqrt(params.dt) * randn2(params.seed, i);",
+    "  let tight = fract(p.seed * 0.91);",
+    "  let sigmaEff = select(params.sigma, params.sigma * 0.25, tight < 0.75);",
+    "  p.pos = p.pos + drift * params.dt + sigmaEff * sqrt(params.dt) * randn2(params.seed, i);",
     "  particles[i] = p;",
     "}"
   ].join("\n");
@@ -230,7 +232,7 @@
     "  var out: VSOut;",
     "  out.pos = vec4<f32>(world.x / params.viewport.x * 2.0 - 1.0, 1.0 - world.y / params.viewport.y * 2.0, 0.0, 1.0);",
     "  out.uv = corner * 0.5 + vec2<f32>(0.5, 0.5);",
-    "  out.alpha = 0.12 + fract(p.seed * 0.37) * 0.16;",
+    "  out.alpha = 0.18 + fract(p.seed * 0.37) * 0.20;",
     "  return out;",
     "}",
     "@fragment",
@@ -299,9 +301,9 @@
     var particleData = new Float32Array(particleCount * 4);
     for (var pi = 0; pi < particleCount; pi++) {
       var anchor = anchors[Math.floor(pi * anchorCount / particleCount)];
-      particleData[pi * 4] = mothCenter.x + anchor.x + randnJS() * 6;
-      particleData[pi * 4 + 1] = mothCenter.y + anchor.y + randnJS() * 6;
-      particleData[pi * 4 + 2] = 8 + Math.random() * 8;
+      particleData[pi * 4] = mothCenter.x + anchor.x + randnJS() * 3;
+      particleData[pi * 4 + 1] = mothCenter.y + anchor.y + randnJS() * 3;
+      particleData[pi * 4 + 2] = 5 + Math.random() * 5;
       particleData[pi * 4 + 3] = Math.random() * 1000;
     }
     var particleBuffer = device.createBuffer({ size: particleData.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
@@ -379,7 +381,7 @@
       waterPass0.end();
       var smokeParams0 = new Float32Array(12);
       smokeParams0[0] = mothCenter.x; smokeParams0[1] = mothCenter.y; smokeParams0[2] = 1; smokeParams0[3] = 0;
-      smokeParams0[4] = 18; smokeParams0[5] = 0.8; smokeParams0[6] = 0; smokeParams0[7] = anchorCount;
+      smokeParams0[4] = 18; smokeParams0[5] = 1.2; smokeParams0[6] = 0; smokeParams0[7] = anchorCount;
       smokeParams0[8] = window.innerWidth; smokeParams0[9] = window.innerHeight;
       device.queue.writeBuffer(smokeParamsBuffer, 0, smokeParams0);
       var smokePass0 = encoder0.beginRenderPass({ colorAttachments: [{ view: smokeContext.getCurrentTexture().createView(), loadOp: "clear", clearValue: { r: 0, g: 0, b: 0, a: 0 }, storeOp: "store" }] });
@@ -452,7 +454,7 @@
 
       var smokeParams = new Float32Array(12);
       smokeParams[0] = mothCenter.x; smokeParams[1] = mothCenter.y; smokeParams[2] = mothFlip; smokeParams[3] = dt;
-      smokeParams[4] = 18; smokeParams[5] = 0.8; smokeParams[6] = seed; smokeParams[7] = anchorCount;
+      smokeParams[4] = 18; smokeParams[5] = 1.2; smokeParams[6] = seed; smokeParams[7] = anchorCount;
       smokeParams[8] = window.innerWidth; smokeParams[9] = window.innerHeight;
       device.queue.writeBuffer(smokeParamsBuffer, 0, smokeParams);
 

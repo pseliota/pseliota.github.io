@@ -26,7 +26,6 @@
 
   var mothCenter = reduced ? { x: window.innerWidth * 0.75, y: window.innerHeight * 0.25 } : { x: -80, y: window.innerHeight * 0.3 };
   var mothVel = { x: 20, y: 0 };
-  var mothFlip = 1;
   var mothMovingUntil = performance.now() + 8000;
   var mothRestingUntil = 0;
   var mothResting = false;
@@ -68,35 +67,6 @@
   window.addEventListener("pointermove", function (event) { rippleFromPointer(event, true); });
   window.addEventListener("touchstart", function (event) { rippleFromPointer(event, false); }, { passive: true });
   window.addEventListener("touchmove", function (event) { rippleFromPointer(event, true); }, { passive: true });
-
-  function bezier(p0, c, p1, t) {
-    var u = 1 - t;
-    return { x: u * u * p0.x + 2 * u * t * c.x + t * t * p1.x, y: u * u * p0.y + 2 * u * t * c.y + t * t * p1.y };
-  }
-  function sampleCurve(arr, p0, c, p1, n) {
-    for (var i = 0; i < n; i++) {
-      arr.push(bezier(p0, c, p1, i / (n - 1)));
-    }
-  }
-  function sampleLine(arr, p0, p1, n) {
-    for (var i = 0; i < n; i++) {
-      var t = i / (n - 1);
-      arr.push({ x: p0.x + (p1.x - p0.x) * t, y: p0.y + (p1.y - p0.y) * t });
-    }
-  }
-  function buildAnchors() {
-    var a = [];
-    sampleCurve(a, { x: 0, y: -14 }, { x: -30, y: -30 }, { x: -70, y: -2 }, 60);
-    sampleCurve(a, { x: -70, y: -2 }, { x: -45, y: 30 }, { x: 0, y: 14 }, 60);
-    sampleCurve(a, { x: 0, y: -14 }, { x: 30, y: -30 }, { x: 70, y: -2 }, 60);
-    sampleCurve(a, { x: 70, y: -2 }, { x: 45, y: 30 }, { x: 0, y: 14 }, 60);
-    sampleCurve(a, { x: 0, y: 0 }, { x: -20, y: -6 }, { x: -42, y: 6 }, 30);
-    sampleCurve(a, { x: 0, y: 0 }, { x: 20, y: -6 }, { x: 42, y: 6 }, 30);
-    sampleLine(a, { x: 0, y: -18 }, { x: 0, y: 18 }, 40);
-    sampleLine(a, { x: 0, y: -18 }, { x: -20, y: -36 }, 15);
-    sampleLine(a, { x: 0, y: -18 }, { x: 20, y: -36 }, 15);
-    return a;
-  }
 
   function startPlainBackground() {
     document.body.style.background = "#faf6ee";
@@ -187,58 +157,110 @@
   ].join("\n");
 
   var smokeComputeShader = [
-    "struct SmokeParams { center: vec2<f32>, flip: f32, dt: f32, sigma: f32, k: f32, seed: f32, anchorCount: f32, viewport: vec2<f32>, pad: vec2<f32> }",
-    "struct Particle { pos: vec2<f32>, size: f32, seed: f32 }",
-    "@group(0) @binding(0) var<storage, read_write> particles: array<Particle>;",
-    "@group(0) @binding(1) var<storage, read> anchors: array<vec2<f32>>;",
-    "@group(0) @binding(2) var<uniform> params: SmokeParams;",
-    "fn hash(n: f32) -> f32 { return fract(sin(n) * 43758.5453); }",
-    "fn randn2(seed: f32, i: u32) -> vec2<f32> {",
-    "  let u1 = max(hash(seed + f32(i) * 12.9898), 0.0001);",
-    "  let u2 = hash(seed * 1.7 + f32(i) * 78.233);",
-    "  let r = sqrt(-2.0 * log(u1));",
-    "  let theta = 6.2831853 * u2;",
-    "  return vec2<f32>(r * cos(theta), r * sin(theta));",
+    "struct Params { damping: f32, gridW: f32, gridH: f32, time: f32 }",
+    "struct Disturb { pos: vec2<f32>, amp: f32, radius: f32 }",
+    "struct Disturbs { items: array<Disturb, 4> }",
+    "struct SmokeParams { center: vec2<f32>, pxPerCell: vec2<f32>, alpha: f32, seed: f32, pad: vec2<f32> }",
+    "@group(0) @binding(0) var<storage, read> cur: array<f32>;",
+    "@group(0) @binding(1) var<storage, read_write> outBuf: array<f32>;",
+    "@group(0) @binding(2) var<uniform> params: Params;",
+    "@group(0) @binding(3) var<uniform> disturbs: Disturbs;",
+    "@group(0) @binding(4) var<uniform> smoke: SmokeParams;",
+    "fn cross2(a: vec2<f32>, b: vec2<f32>) -> f32 { return a.x * b.y - a.y * b.x; }",
+    "fn distSeg(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>) -> f32 {",
+    "  let ab = b - a;",
+    "  let t = clamp(dot(p - a, ab) / dot(ab, ab), 0.0, 1.0);",
+    "  return distance(p, a + ab * t);",
     "}",
-    "@compute @workgroup_size(64)",
+    "fn insideConvex(p: vec2<f32>, v0: vec2<f32>, v1: vec2<f32>, v2: vec2<f32>, v3: vec2<f32>, v4: vec2<f32>) -> bool {",
+    "  let c0 = cross2(v1 - v0, p - v0);",
+    "  let c1 = cross2(v2 - v1, p - v1);",
+    "  let c2 = cross2(v3 - v2, p - v2);",
+    "  let c3 = cross2(v4 - v3, p - v3);",
+    "  let c4 = cross2(v0 - v4, p - v4);",
+    "  return (c0 >= 0.0 && c1 >= 0.0 && c2 >= 0.0 && c3 >= 0.0 && c4 >= 0.0) || (c0 <= 0.0 && c1 <= 0.0 && c2 <= 0.0 && c3 <= 0.0 && c4 <= 0.0);",
+    "}",
+    "fn wingOutlineDist(p: vec2<f32>, v0: vec2<f32>, v1: vec2<f32>, v2: vec2<f32>, v3: vec2<f32>, v4: vec2<f32>) -> f32 {",
+    "  var d = distSeg(p, v0, v1);",
+    "  d = min(d, distSeg(p, v1, v2));",
+    "  d = min(d, distSeg(p, v2, v3));",
+    "  d = min(d, distSeg(p, v3, v4));",
+    "  d = min(d, distSeg(p, v4, v0));",
+    "  return d;",
+    "}",
+    "fn mothTarget(p: vec2<f32>) -> f32 {",
+    "  if (abs(p.x) > 90.0 || abs(p.y) > 50.0) { return 0.0; }",
+    "  var target = 0.0;",
+    "  let leftInside = insideConvex(p, vec2<f32>(0.0, 14.0), vec2<f32>(-30.0, 30.0), vec2<f32>(-70.0, 2.0), vec2<f32>(-45.0, -30.0), vec2<f32>(0.0, -14.0));",
+    "  let rightInside = insideConvex(p, vec2<f32>(0.0, 14.0), vec2<f32>(30.0, 30.0), vec2<f32>(70.0, 2.0), vec2<f32>(45.0, -30.0), vec2<f32>(0.0, -14.0));",
+    "  if (leftInside || rightInside) { target = max(target, 0.35); }",
+    "  let outline = min(",
+    "    wingOutlineDist(p, vec2<f32>(0.0, 14.0), vec2<f32>(-30.0, 30.0), vec2<f32>(-70.0, 2.0), vec2<f32>(-45.0, -30.0), vec2<f32>(0.0, -14.0)),",
+    "    wingOutlineDist(p, vec2<f32>(0.0, 14.0), vec2<f32>(30.0, 30.0), vec2<f32>(70.0, 2.0), vec2<f32>(45.0, -30.0), vec2<f32>(0.0, -14.0))",
+    "  );",
+    "  target = max(target, exp(-outline * outline / 32.0));",
+    "  let body = distSeg(p, vec2<f32>(0.0, 18.0), vec2<f32>(0.0, -18.0));",
+    "  if (body < 6.0) { target = max(target, 0.85); }",
+    "  let ant = min(distSeg(p, vec2<f32>(0.0, 18.0), vec2<f32>(-20.0, 36.0)), distSeg(p, vec2<f32>(0.0, 18.0), vec2<f32>(20.0, 36.0)));",
+    "  if (ant < 2.5) { target = max(target, 0.6 * exp(-ant * ant / 8.0)); }",
+    "  return target;",
+    "}",
+    "fn hash(n: f32) -> f32 { return fract(sin(n) * 43758.5453); }",
+    "@compute @workgroup_size(16, 16)",
     "fn main(@builtin(global_invocation_id) id: vec3<u32>) {",
-    "  let i = id.x;",
-    "  if (i >= arrayLength(&particles)) { return; }",
-    "  let anchorCount = u32(params.anchorCount);",
-    "  let anchorIdx = i * anchorCount / arrayLength(&particles);",
-    "  let anchor = anchors[anchorIdx];",
-    "  let anchorWorld = params.center + vec2<f32>(anchor.x * params.flip, anchor.y);",
-    "  var p = particles[i];",
-    "  let drift = -params.k * (p.pos - anchorWorld);",
-    "  let tight = fract(p.seed * 0.91);",
-    "  let sigmaEff = select(params.sigma, params.sigma * 0.25, tight < 0.75);",
-    "  p.pos = p.pos + drift * params.dt + sigmaEff * sqrt(params.dt) * randn2(params.seed, i);",
-    "  particles[i] = p;",
+    "  let w = u32(params.gridW);",
+    "  let h = u32(params.gridH);",
+    "  if (id.x >= w || id.y >= h) { return; }",
+    "  let idx = id.y * w + id.x;",
+    "  let xm = select(id.x - 1u, 0u, id.x == 0u);",
+    "  let xp = select(id.x + 1u, w - 1u, id.x == w - 1u);",
+    "  let ym = select(id.y - 1u, 0u, id.y == 0u);",
+    "  let yp = select(id.y + 1u, h - 1u, id.y == h - 1u);",
+    "  let left = cur[id.y * w + xm];",
+    "  let right = cur[id.y * w + xp];",
+    "  let up = cur[ym * w + id.x];",
+    "  let down = cur[yp * w + id.x];",
+    "  var v = (left + right + up + down) * 0.5 - outBuf[idx];",
+    "  v = v * params.damping;",
+    "  let local = vec2<f32>((f32(id.x) - smoke.center.x) * smoke.pxPerCell.x, (f32(id.y) - smoke.center.y) * smoke.pxPerCell.y);",
+    "  let target = mothTarget(local);",
+    "  v = v + smoke.alpha * (target - cur[idx]);",
+    "  if (abs(local.x) < 90.0 && abs(local.y) < 50.0) {",
+    "    v = v + (hash(f32(idx) * 0.123 + smoke.seed) - 0.5) * 0.04;",
+    "    for (var i = 0; i < 4; i = i + 1) {",
+    "      let d = disturbs.items[i];",
+    "      if (d.amp != 0.0) {",
+    "        let dist = distance(vec2<f32>(f32(id.x), f32(id.y)), d.pos);",
+    "        if (dist < d.radius) {",
+    "          v = v + d.amp * 0.2 * exp(-dist * dist / (d.radius * d.radius * 0.25));",
+    "        }",
+    "      }",
+    "    }",
+    "  }",
+    "  outBuf[idx] = clamp(v, -0.5, 1.5);",
     "}"
   ].join("\n");
 
   var smokeRenderShader = [
-    "struct SmokeParams { center: vec2<f32>, flip: f32, dt: f32, sigma: f32, k: f32, seed: f32, anchorCount: f32, viewport: vec2<f32>, pad: vec2<f32> }",
-    "struct Particle { pos: vec2<f32>, size: f32, seed: f32 }",
-    "struct VSOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32>, @location(1) alpha: f32 }",
-    "@group(0) @binding(0) var<storage, read> particles: array<Particle>;",
-    "@group(0) @binding(1) var<uniform> params: SmokeParams;",
+    "struct Params { damping: f32, gridW: f32, gridH: f32, time: f32 }",
+    "struct VSOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> }",
     "@vertex",
-    "fn vs(@builtin(vertex_index) v: u32, @builtin(instance_index) inst: u32) -> VSOut {",
-    "  var corners = array<vec2<f32>, 6>(vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, -1.0), vec2<f32>(-1.0, 1.0), vec2<f32>(1.0, -1.0), vec2<f32>(1.0, 1.0), vec2<f32>(-1.0, 1.0));",
-    "  let p = particles[inst];",
-    "  let corner = corners[v];",
-    "  let world = p.pos + corner * p.size * 0.5;",
+    "fn vs(@builtin(vertex_index) i: u32) -> VSOut {",
+    "  var positions = array<vec2<f32>, 3>(vec2<f32>(-1.0, -1.0), vec2<f32>(3.0, -1.0), vec2<f32>(-1.0, 3.0));",
     "  var out: VSOut;",
-    "  out.pos = vec4<f32>(world.x / params.viewport.x * 2.0 - 1.0, 1.0 - world.y / params.viewport.y * 2.0, 0.0, 1.0);",
-    "  out.uv = corner * 0.5 + vec2<f32>(0.5, 0.5);",
-    "  out.alpha = 0.18 + fract(p.seed * 0.37) * 0.20;",
+    "  out.pos = vec4<f32>(positions[i], 0.0, 1.0);",
+    "  out.uv = positions[i] * 0.5 + vec2<f32>(0.5, 0.5);",
     "  return out;",
     "}",
+    "@group(0) @binding(0) var<storage, read> field: array<f32>;",
+    "@group(0) @binding(1) var<uniform> params: Params;",
     "@fragment",
-    "fn fs(@location(0) uv: vec2<f32>, @location(1) alpha: f32) -> @location(0) vec4<f32> {",
-    "  let dist = length(uv - vec2<f32>(0.5, 0.5)) * 2.0;",
-    "  let a = smoothstep(1.0, 0.1, dist) * alpha;",
+    "fn fs(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {",
+    "  let w = u32(params.gridW);",
+    "  let h = u32(params.gridH);",
+    "  let gx = min(u32(uv.x * params.gridW), w - 1u);",
+    "  let gy = min(u32(uv.y * params.gridH), h - 1u);",
+    "  let a = clamp(field[gy * w + gx], 0.0, 1.0) * 0.9;",
     "  return vec4<f32>(0.78, 0.72, 0.58, a);",
     "}"
   ].join("\n");
@@ -283,32 +305,12 @@
     var cellCount = gridW * gridH;
     var bufferA = device.createBuffer({ size: cellCount * 4, usage: GPUBufferUsage.STORAGE });
     var bufferB = device.createBuffer({ size: cellCount * 4, usage: GPUBufferUsage.STORAGE });
+    var smokeA = device.createBuffer({ size: cellCount * 4, usage: GPUBufferUsage.STORAGE });
+    var smokeB = device.createBuffer({ size: cellCount * 4, usage: GPUBufferUsage.STORAGE });
     var waterParamsBuffer = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     device.queue.writeBuffer(waterParamsBuffer, 0, new Float32Array([0.97, gridW, gridH, 0]));
     var disturbsBuffer = device.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-
-    var anchors = buildAnchors();
-    var anchorCount = anchors.length;
-    var anchorData = new Float32Array(anchorCount * 2);
-    for (var ai = 0; ai < anchorCount; ai++) {
-      anchorData[ai * 2] = anchors[ai].x;
-      anchorData[ai * 2 + 1] = anchors[ai].y;
-    }
-    var anchorBuffer = device.createBuffer({ size: anchorData.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
-    device.queue.writeBuffer(anchorBuffer, 0, anchorData);
-
-    var particleCount = 2200;
-    var particleData = new Float32Array(particleCount * 4);
-    for (var pi = 0; pi < particleCount; pi++) {
-      var anchor = anchors[Math.floor(pi * anchorCount / particleCount)];
-      particleData[pi * 4] = mothCenter.x + anchor.x + randnJS() * 3;
-      particleData[pi * 4 + 1] = mothCenter.y + anchor.y + randnJS() * 3;
-      particleData[pi * 4 + 2] = 5 + Math.random() * 5;
-      particleData[pi * 4 + 3] = Math.random() * 1000;
-    }
-    var particleBuffer = device.createBuffer({ size: particleData.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
-    device.queue.writeBuffer(particleBuffer, 0, particleData);
-    var smokeParamsBuffer = device.createBuffer({ size: 48, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    var smokeParamsBuffer = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 
     var waterComputeModule = device.createShaderModule({ code: waterComputeShader });
     var waterRenderModule = device.createShaderModule({ code: waterRenderShader });
@@ -359,41 +361,72 @@
       { binding: 0, resource: { buffer: bufferB } },
       { binding: 1, resource: { buffer: waterParamsBuffer } }
     ]});
-    var smokeComputeGroup = device.createBindGroup({ layout: smokeComputePipeline.getBindGroupLayout(0), entries: [
-      { binding: 0, resource: { buffer: particleBuffer } },
-      { binding: 1, resource: { buffer: anchorBuffer } },
-      { binding: 2, resource: { buffer: smokeParamsBuffer } }
+    var smokeComputeGroupA = device.createBindGroup({ layout: smokeComputePipeline.getBindGroupLayout(0), entries: [
+      { binding: 0, resource: { buffer: smokeA } },
+      { binding: 1, resource: { buffer: smokeB } },
+      { binding: 2, resource: { buffer: waterParamsBuffer } },
+      { binding: 3, resource: { buffer: disturbsBuffer } },
+      { binding: 4, resource: { buffer: smokeParamsBuffer } }
     ]});
-    var smokeRenderGroup = device.createBindGroup({ layout: smokeRenderPipeline.getBindGroupLayout(0), entries: [
-      { binding: 0, resource: { buffer: particleBuffer } },
-      { binding: 1, resource: { buffer: smokeParamsBuffer } }
+    var smokeComputeGroupB = device.createBindGroup({ layout: smokeComputePipeline.getBindGroupLayout(0), entries: [
+      { binding: 0, resource: { buffer: smokeB } },
+      { binding: 1, resource: { buffer: smokeA } },
+      { binding: 2, resource: { buffer: waterParamsBuffer } },
+      { binding: 3, resource: { buffer: disturbsBuffer } },
+      { binding: 4, resource: { buffer: smokeParamsBuffer } }
+    ]});
+    var smokeRenderGroupA = device.createBindGroup({ layout: smokeRenderPipeline.getBindGroupLayout(0), entries: [
+      { binding: 0, resource: { buffer: smokeA } },
+      { binding: 1, resource: { buffer: waterParamsBuffer } }
+    ]});
+    var smokeRenderGroupB = device.createBindGroup({ layout: smokeRenderPipeline.getBindGroupLayout(0), entries: [
+      { binding: 0, resource: { buffer: smokeB } },
+      { binding: 1, resource: { buffer: waterParamsBuffer } }
     ]});
 
     webgpuActive = true;
     window.__waterMode = "webgpu";
 
+    function smokeParamsFor(seed) {
+      var centerGridX = mothCenter.x / window.innerWidth * gridW;
+      var centerGridY = (window.innerHeight - mothCenter.y) / window.innerHeight * gridH;
+      var params = new Float32Array(8);
+      params[0] = centerGridX; params[1] = centerGridY;
+      params[2] = window.innerWidth / gridW; params[3] = window.innerHeight / gridH;
+      params[4] = 0.04; params[5] = seed;
+      return params;
+    }
+
     if (reduced) {
+      var smokeUseA0 = true;
+      for (var ri = 0; ri < 80; ri++) {
+        device.queue.writeBuffer(smokeParamsBuffer, 0, smokeParamsFor(0));
+        var enc0 = device.createCommandEncoder();
+        var cp0 = enc0.beginComputePass();
+        cp0.setPipeline(smokeComputePipeline);
+        cp0.setBindGroup(0, smokeUseA0 ? smokeComputeGroupA : smokeComputeGroupB);
+        cp0.dispatchWorkgroups(Math.ceil(gridW / 16), Math.ceil(gridH / 16));
+        cp0.end();
+        device.queue.submit([enc0.finish()]);
+        smokeUseA0 = !smokeUseA0;
+      }
       var encoder0 = device.createCommandEncoder();
       var waterPass0 = encoder0.beginRenderPass({ colorAttachments: [{ view: waterContext.getCurrentTexture().createView(), loadOp: "clear", clearValue: { r: 0.98, g: 0.96, b: 0.93, a: 1 }, storeOp: "store" }] });
       waterPass0.setPipeline(waterRenderPipeline);
       waterPass0.setBindGroup(0, waterRenderGroupA);
       waterPass0.draw(3);
       waterPass0.end();
-      var smokeParams0 = new Float32Array(12);
-      smokeParams0[0] = mothCenter.x; smokeParams0[1] = mothCenter.y; smokeParams0[2] = 1; smokeParams0[3] = 0;
-      smokeParams0[4] = 18; smokeParams0[5] = 1.2; smokeParams0[6] = 0; smokeParams0[7] = anchorCount;
-      smokeParams0[8] = window.innerWidth; smokeParams0[9] = window.innerHeight;
-      device.queue.writeBuffer(smokeParamsBuffer, 0, smokeParams0);
       var smokePass0 = encoder0.beginRenderPass({ colorAttachments: [{ view: smokeContext.getCurrentTexture().createView(), loadOp: "clear", clearValue: { r: 0, g: 0, b: 0, a: 0 }, storeOp: "store" }] });
       smokePass0.setPipeline(smokeRenderPipeline);
-      smokePass0.setBindGroup(0, smokeRenderGroup);
-      smokePass0.draw(6, particleCount);
+      smokePass0.setBindGroup(0, smokeUseA0 ? smokeRenderGroupA : smokeRenderGroupB);
+      smokePass0.draw(3);
       smokePass0.end();
       device.queue.submit([encoder0.finish()]);
       return true;
     }
 
     var useA = true;
+    var smokeUseA = true;
     var last = performance.now();
     var seed = 0;
     function frame(now) {
@@ -429,9 +462,6 @@
           mothVel.x = (mothVel.x / speed) * maxSpeed;
           mothVel.y = (mothVel.y / speed) * maxSpeed;
         }
-        if (Math.abs(mothVel.x) > 5) {
-          mothFlip = mothVel.x < 0 ? -1 : 1;
-        }
       }
       mothCenter.x += mothVel.x * dt;
       mothCenter.y += mothVel.y * dt;
@@ -451,12 +481,7 @@
       }
       pendingDisturbs.length = 0;
       device.queue.writeBuffer(disturbsBuffer, 0, disturbs);
-
-      var smokeParams = new Float32Array(12);
-      smokeParams[0] = mothCenter.x; smokeParams[1] = mothCenter.y; smokeParams[2] = mothFlip; smokeParams[3] = dt;
-      smokeParams[4] = 18; smokeParams[5] = 1.2; smokeParams[6] = seed; smokeParams[7] = anchorCount;
-      smokeParams[8] = window.innerWidth; smokeParams[9] = window.innerHeight;
-      device.queue.writeBuffer(smokeParamsBuffer, 0, smokeParams);
+      device.queue.writeBuffer(smokeParamsBuffer, 0, smokeParamsFor(seed));
 
       var encoder = device.createCommandEncoder();
       var waterComputePass = encoder.beginComputePass();
@@ -472,13 +497,14 @@
       waterPass.end();
       var smokeComputePass = encoder.beginComputePass();
       smokeComputePass.setPipeline(smokeComputePipeline);
-      smokeComputePass.setBindGroup(0, smokeComputeGroup);
-      smokeComputePass.dispatchWorkgroups(Math.ceil(particleCount / 64));
+      smokeComputePass.setBindGroup(0, smokeUseA ? smokeComputeGroupA : smokeComputeGroupB);
+      smokeComputePass.dispatchWorkgroups(Math.ceil(gridW / 16), Math.ceil(gridH / 16));
       smokeComputePass.end();
+      smokeUseA = !smokeUseA;
       var smokePass = encoder.beginRenderPass({ colorAttachments: [{ view: smokeContext.getCurrentTexture().createView(), loadOp: "clear", clearValue: { r: 0, g: 0, b: 0, a: 0 }, storeOp: "store" }] });
       smokePass.setPipeline(smokeRenderPipeline);
-      smokePass.setBindGroup(0, smokeRenderGroup);
-      smokePass.draw(6, particleCount);
+      smokePass.setBindGroup(0, smokeUseA ? smokeRenderGroupA : smokeRenderGroupB);
+      smokePass.draw(3);
       smokePass.end();
       device.queue.submit([encoder.finish()]);
       requestAnimationFrame(frame);

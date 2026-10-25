@@ -56,87 +56,14 @@
   window.addEventListener("touchstart", function (event) { rippleFromPointer(event, false); }, { passive: true });
   window.addEventListener("touchmove", function (event) { rippleFromPointer(event, true); }, { passive: true });
 
-  function startCanvasWater() {
-    var canvas = document.createElement("canvas");
-    canvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%;";
-    background.insertBefore(canvas, sky);
-    var ctx = canvas.getContext("2d");
-    function resize() {
-      var dpr = Math.min(1.5, window.devicePixelRatio || 1);
-      canvas.width = window.innerWidth * dpr;
-      canvas.height = window.innerHeight * dpr;
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  function startPlainBackground() {
+    document.body.style.background = "#faf6ee";
+    function clearDisturbs() {
+      pendingDisturbs.length = 0;
+      requestAnimationFrame(clearDisturbs);
     }
-    resize();
-    window.addEventListener("resize", resize);
-    window.addEventListener("scroll", resize, { passive: true });
-    if (window.visualViewport) { window.visualViewport.addEventListener("resize", resize); }
-    var ripples = [];
-    var lastWater = performance.now();
-    function drawWater(t) {
-      var w = window.innerWidth, h = window.innerHeight;
-      var gradient = ctx.createLinearGradient(0, 0, 0, h);
-      gradient.addColorStop(0, "#f3ead6");
-      gradient.addColorStop(0.55, "#f7f1e2");
-      gradient.addColorStop(1, "#faf6ee");
-      ctx.fillStyle = gradient;
-      ctx.fillRect(0, 0, w, h);
-      var waves = [
-        { base: 0.12, amp: 8, speed: 0.0004, phase: 0, alpha: 0.28 },
-        { base: 0.32, amp: 11, speed: 0.00035, phase: 1, alpha: 0.24 },
-        { base: 0.52, amp: 13, speed: 0.0003, phase: 2, alpha: 0.22 },
-        { base: 0.72, amp: 15, speed: 0.00026, phase: 3, alpha: 0.19 },
-        { base: 0.92, amp: 17, speed: 0.00022, phase: 4, alpha: 0.16 }
-      ];
-      for (var i = 0; i < waves.length; i++) {
-        var wave = waves[i];
-        ctx.beginPath();
-        ctx.moveTo(0, h);
-        for (var x = 0; x <= w; x += 10) {
-          var y = h * wave.base + Math.sin(x * 0.008 + t * wave.speed + wave.phase) * wave.amp + Math.sin(x * 0.02 - t * wave.speed * 0.7) * wave.amp * 0.4;
-          ctx.lineTo(x, y);
-        }
-        ctx.lineTo(w, h);
-        ctx.closePath();
-        ctx.fillStyle = "rgba(216, 203, 176, " + (wave.alpha * 0.5) + ")";
-        ctx.fill();
-        ctx.beginPath();
-        for (var x2 = 0; x2 <= w; x2 += 10) {
-          var y2 = h * wave.base + Math.sin(x2 * 0.008 + t * wave.speed + wave.phase) * wave.amp + Math.sin(x2 * 0.02 - t * wave.speed * 0.7) * wave.amp * 0.4;
-          if (x2 === 0) { ctx.moveTo(x2, y2); } else { ctx.lineTo(x2, y2); }
-        }
-        ctx.strokeStyle = "rgba(184, 173, 156, " + wave.alpha + ")";
-        ctx.lineWidth = 1;
-        ctx.stroke();
-      }
-      for (var j = ripples.length - 1; j >= 0; j--) {
-        var ripple = ripples[j];
-        ctx.beginPath();
-        ctx.arc(ripple.x, ripple.y, ripple.r, 0, Math.PI * 2);
-        ctx.strokeStyle = "rgba(150, 138, 115, " + ripple.alpha + ")";
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
-      }
-    }
-    function waterFrame(now) {
-      var dt = Math.min(0.05, (now - lastWater) / 1000);
-      lastWater = now;
-      while (pendingDisturbs.length > 0) {
-        var d = pendingDisturbs.shift();
-        ripples.push({ x: d.x, y: d.y, r: 6, alpha: Math.min(0.42, d.amp * 0.07) });
-      }
-      for (var i = ripples.length - 1; i >= 0; i--) {
-        ripples[i].r += 28 * dt;
-        ripples[i].alpha -= 0.5 * dt;
-        if (ripples[i].alpha <= 0) { ripples.splice(i, 1); }
-      }
-      drawWater(0);
-      requestAnimationFrame(waterFrame);
-    }
-    if (reduced) {
-      drawWater(0);
-    } else {
-      requestAnimationFrame(waterFrame);
+    if (!reduced) {
+      requestAnimationFrame(clearDisturbs);
     }
   }
 
@@ -322,9 +249,9 @@
   }
 
   startWebGPU().then(function (ok) {
-    if (!ok) { startCanvasWater(); }
+    if (!ok) { startPlainBackground(); }
   }).catch(function () {
-    startCanvasWater();
+    startPlainBackground();
   });
 
   if (reduced) {

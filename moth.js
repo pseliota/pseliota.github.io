@@ -73,7 +73,6 @@
     if (window.visualViewport) { window.visualViewport.addEventListener("resize", resize); }
     var ripples = [];
     var lastWater = performance.now();
-    var nextRandom = lastWater + 2500;
     function drawWater(t) {
       var w = window.innerWidth, h = window.innerHeight;
       var gradient = ctx.createLinearGradient(0, 0, 0, h);
@@ -122,10 +121,6 @@
     function waterFrame(now) {
       var dt = Math.min(0.05, (now - lastWater) / 1000);
       lastWater = now;
-      if (now >= nextRandom) {
-        pendingDisturbs.push({ x: Math.random() * window.innerWidth, y: Math.random() * window.innerHeight, amp: 2, radius: 10 });
-        nextRandom = now + 2500 + Math.random() * 2500;
-      }
       while (pendingDisturbs.length > 0) {
         var d = pendingDisturbs.shift();
         ripples.push({ x: d.x, y: d.y, r: 6, alpha: Math.min(0.42, d.amp * 0.07) });
@@ -135,7 +130,7 @@
         ripples[i].alpha -= 0.5 * dt;
         if (ripples[i].alpha <= 0) { ripples.splice(i, 1); }
       }
-      drawWater(now);
+      drawWater(0);
       requestAnimationFrame(waterFrame);
     }
     if (reduced) {
@@ -215,7 +210,7 @@
     "  let shade = vec3<f32>(0.82, 0.77, 0.65);",
     "  var col = mix(shade, cream, diffuse);",
     "  col = col + heights[idx] * 0.015;",
-    "  col = col + vec3<f32>(0.02 * sin(uv.y * 40.0 + params.time * 0.8 + sin(uv.x * 20.0 + params.time * 0.5) * 0.5));",
+    "  col = col + vec3<f32>(0.02 * sin(uv.y * 40.0 + sin(uv.x * 20.0) * 0.5));",
     "  col = clamp(col, vec3<f32>(0.0), vec3<f32>(1.0));",
     "  return vec4<f32>(col, 1.0);",
     "}"
@@ -283,18 +278,13 @@
       { binding: 1, resource: { buffer: paramsBuffer } }
     ]});
     var useA = true;
-    var nextRandom = performance.now() + 2500;
     function webgpuFrame(now) {
-      device.queue.writeBuffer(paramsBuffer, 0, new Float32Array([0.97, gridW, gridH, now * 0.001]));
-      if (now >= nextRandom) {
-        pendingDisturbs.push({ x: Math.random() * window.innerWidth, y: Math.random() * window.innerHeight, amp: 2, radius: 10 });
-        nextRandom = now + 2500 + Math.random() * 2500;
-      }
+      void now;
       var disturbs = new Float32Array(16);
       for (var i = 0; i < 4 && pendingDisturbs.length > 0; i++) {
         var d = pendingDisturbs.shift();
         disturbs[i * 4] = d.x / window.innerWidth * gridW;
-        disturbs[i * 4 + 1] = d.y / window.innerHeight * gridH;
+        disturbs[i * 4 + 1] = (window.innerHeight - d.y) / window.innerHeight * gridH;
         disturbs[i * 4 + 2] = d.amp;
         disturbs[i * 4 + 3] = d.radius;
       }
@@ -414,7 +404,6 @@
         moth.style.transform = "scaleX(" + (vx < 0 ? -1 : 1) + ")";
       }
       if (speed > 10) {
-        pendingDisturbs.push({ x: x + 23, y: y + 16, amp: speed * 0.03, radius: 8 });
         if (now >= nextPuff) {
           spawnPuff(x + 23, y + 16);
           nextPuff = now + 140;
